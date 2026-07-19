@@ -1,0 +1,233 @@
+"""App-engine tests. Network services are faked; the DB, config and importer
+(filesystem) are real."""
+
+import pytest
+
+from llmarr import core
+from llmarr.config import DownloadClientConfig, PathMapping, RootFolder
+from llmarr.metadata.base import EpisodeInfo, MovieInfo, SeriesInfo
+
+
+@pytest.fixture
+def configured(app):
+    """App with a download client + Plex creds configured."""
+    def setup(c):
+        c.download_clients["qbit"] = DownloadClientConfig(url="http://qb", save_path="/downloads")
+        c.default_download_client = "qbit"
+        c.plex.url = "http://plex"
+        c.plex.token = "t"
+    app.store.mutate(setup)
+    return app
+
+
+# --------------------------------------------------------------------------- #
+# add_series / add_movie
+# --------------------------------------------------------------------------- #
+async def test_add_series_populates_episodes(app, fakes, monkeypatch):
+    info = SeriesInfo(
+        provider="tmdb", provider_id="1", title="Severance", year=2022,
+        seasons=[1, 2],
+        episodes=[
+            EpisodeInfo(season=1, episode=1, title="A"),
+            EpisodeInfo(season=1, episode=2, title="B"),
+            EpisodeInfo(season=2, episode=1, title="C"),
+        ],
+    )
+    monkeypatch.setattr(app, "provider", lambda: fakes["Provider"](series_info=info))
+
+    result = await app.add_series("1", seasons=[2])
+    assert result["title"] == "Severance"
+    assert result["episode_count"] == 3
+    eps = app.db.list_episodes(result["id"])
+    monitored = {(e["season"], e["episode"]): e["monitored"] for e in eps}
+    # Only season 2 monitored.
+    assert monitored[(2, 1)] == 1
+    assert monitored[(1, 1)] == 0 and monitored[(1, 2)] == 0
+
+
+async def test_add_movie(app, fakes, monkeypatch):
+    info = MovieInfo(provider="tmdb", provider_id="9", title="Dune", year=2021)
+    monkeypatch.setattr(app, "provider", lambda: fakes["Provider"](movie_info=info))
+    result = await app.add_movie("9")
+    assert result["title"] == "Dune"
+    assert result["folder_name"] == "Dune (2021)"
+    assert result["movie_status"] == "missing"
+
+
+# --------------------------------------------------------------------------- #
+# search + grab
+# --------------------------------------------------------------------------- #
+async def test_search_releases_applies_quality(app, fakes, monkeypatch):
+    rels = [
+        fakes["make_release"]("Show.S01E01.CAM", seeders=999),
+        fakes["make_release"]("Show.S01E01.1080p.WEB", seeders=50),
+        fakes["make_release"]("Show.S01E01.720p", seeders=40),
+    ]
+    monkeypatch.setattr(app, "prowlarr", lambda: fakes["Prowlarr"](releases=rels))
+    out = await app.search_releases("show", apply_quality=True)
+    titles = [r["title"] for r in out]
+    assert "Show.S01E01.CAM" not in titles  # ignored term filtered
+    assert titles[0] == "Show.S01E01.1080p.WEB"  # best ranked first
+    assert out[0]["resolution"] == "1080p"
+
+
+async def test_grab_records_download_and_marks_episode(configured, fakes, monkeypatch):
+    app = configured
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
+    sid = app.db.upsert_series(provider="tmdb", provider_id="1", title="Show")
+    e = app.db.upsert_episode(sid, 1, 1)
+
+    res = await app.grab(
+        "magnet:?xt=urn:btih:" + "a" * 40, title="Show.S01E01.1080p",
+        series_id=sid, episode_id=e, guid="g1",
+    )
+    assert res["torrent_hash"]
+    dl = app.db.get_download(res["download_id"])
+    assert dl["series_id"] == sid and dl["episode_id"] == e
+    assert app.db.get_episode(e)["status"] == "grabbed"
+    assert app.db.seen_guid("g1")
+
+
+async def test_grab_movie_marks_movie(configured, fakes, monkeypatch):
+    app = configured
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
+    mid = app.db.upsert_movie(provider="tmdb", provider_id="9", title="Dune")
+    res = await app.grab("magnet:?xt=urn:btih:" + "a" * 40, title="Dune.2021", movie_id=mid)
+    assert app.db.get_movie(mid)["movie_status"] == "grabbed"
+    assert app.db.get_download(res["download_id"])["movie_id"] == mid
+
+
+async def test_client_config_error_when_ambiguous(app):
+    def setup(c):
+        c.download_clients["a"] = DownloadClientConfig(url="http://a")
+        c.download_clients["b"] = DownloadClientConfig(url="http://b")
+    app.store.mutate(setup)
+    with pytest.raises(ValueError):
+        app._client_config(None)  # two clients, no default -> ambiguous
+
+
+# --------------------------------------------------------------------------- #
+# refresh_downloads -> import -> plex
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def import_ready(configured, tmp_path):
+    app = configured
+    dl = tmp_path / "dl"
+    lib = tmp_path / "lib"
+    dl.mkdir()
+    lib.mkdir()
+    (dl / "Show.S01E01.mkv").write_text("x" * 1000)
+
+    def setup(c):
+        c.importer.min_video_mb = 0
+        c.path_mappings = [
+            PathMapping(group="dl", context="qbittorrent", path="/downloads"),
+            PathMapping(group="dl", context="local", path=str(dl)),
+            PathMapping(group="lib", context="local", path=str(lib)),
+            PathMapping(group="lib", context="plex", path="/data/tv"),
+        ]
+        c.root_folders = [RootFolder(name="tv", media_type="tv", context="local", path=str(lib))]
+
+    app.store.mutate(setup)
+    return app, dl, lib
+
+
+async def test_refresh_completes_imports_and_scans(import_ready, fakes, monkeypatch):
+    app, dl, lib = import_ready
+    fake_plex = fakes["Plex"]()
+    monkeypatch.setattr(
+        core, "get_client",
+        lambda cfg: fakes["DownloadClient"](complete=True, content_path="/downloads/Show.S01E01.mkv"),
+    )
+    monkeypatch.setattr(app, "plex", lambda: fake_plex)
+
+    sid = app.db.upsert_series(
+        provider="tmdb", provider_id="1", title="Show", year=2020,
+        root_folder="tv", folder_name="Show (2020)",
+    )
+    e = app.db.upsert_episode(sid, 1, 1, title="Pilot")
+    did = app.db.add_download(
+        series_id=sid, episode_id=e, title="Show.S01E01", torrent_hash="h", client="qbit"
+    )
+
+    updates = await app.refresh_downloads()
+    assert updates[0]["state"] == "completed"
+    assert updates[0]["notified"] is True
+    assert app.db.get_download(did)["status"] == "imported"
+    assert app.db.get_episode(e)["status"] == "downloaded"
+    # Plex scanned the season dir translated into its own namespace.
+    section, path = fake_plex.scans[0]
+    assert section == "TV Shows"
+    assert path.startswith("/data/tv/Show (2020)/Season 01")
+
+
+async def test_refresh_downloading_not_completed(configured, fakes, monkeypatch):
+    app = configured
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"](complete=False))
+    did = app.db.add_download(title="X", torrent_hash="h", client="qbit")
+    updates = await app.refresh_downloads()
+    assert updates[0]["state"] == "downloading"
+    assert app.db.get_download(did)["status"] == "downloading"
+
+
+# --------------------------------------------------------------------------- #
+# rss_poll
+# --------------------------------------------------------------------------- #
+async def test_rss_poll_auto_grabs_missing_episode(configured, fakes, monkeypatch):
+    app = configured
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
+    rels = [fakes["make_release"]("Show.S01E01.1080p.WEB", guid="rel1", seeders=50)]
+    monkeypatch.setattr(app, "prowlarr", lambda: fakes["Prowlarr"](releases=rels))
+
+    sid = app.db.upsert_series(provider="tmdb", provider_id="1", title="Show", monitored=1)
+    e = app.db.upsert_episode(sid, 1, 1)
+    app.db.execute("UPDATE episodes SET monitored=1 WHERE id=?", (e,))
+
+    result = await app.rss_poll()
+    assert len(result["grabbed"]) == 1
+    assert app.db.get_episode(e)["status"] == "grabbed"
+    assert app.db.seen_guid("rel1")
+
+
+async def test_rss_poll_skips_seen_guid(configured, fakes, monkeypatch):
+    app = configured
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
+    rels = [fakes["make_release"]("Show.S01E01.1080p", guid="rel1")]
+    monkeypatch.setattr(app, "prowlarr", lambda: fakes["Prowlarr"](releases=rels))
+    app.db.record_guid("rel1")
+
+    sid = app.db.upsert_series(provider="tmdb", provider_id="1", title="Show", monitored=1)
+    e = app.db.upsert_episode(sid, 1, 1)
+    app.db.execute("UPDATE episodes SET monitored=1 WHERE id=?", (e,))
+
+    result = await app.rss_poll()
+    assert result["grabbed"] == []
+
+
+async def test_rss_poll_candidates_when_autograb_off(configured, fakes, monkeypatch):
+    app = configured
+    app.store.mutate(lambda c: setattr(c.rss, "auto_grab", False))
+    rels = [fakes["make_release"]("Show.S01E01.1080p", guid="rel1")]
+    monkeypatch.setattr(app, "prowlarr", lambda: fakes["Prowlarr"](releases=rels))
+
+    sid = app.db.upsert_series(provider="tmdb", provider_id="1", title="Show", monitored=1)
+    e = app.db.upsert_episode(sid, 1, 1)
+    app.db.execute("UPDATE episodes SET monitored=1 WHERE id=?", (e,))
+
+    result = await app.rss_poll()
+    assert result["grabbed"] == []
+    assert any("S01E01" in c.get("episode", "") for c in result["candidates"])
+    assert app.db.get_episode(e)["status"] == "missing"  # not grabbed
+
+
+async def test_rss_poll_auto_grabs_missing_movie(configured, fakes, monkeypatch):
+    app = configured
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
+    rels = [fakes["make_release"]("Dune.2021.1080p.WEB", guid="m1", seeders=80)]
+    monkeypatch.setattr(app, "prowlarr", lambda: fakes["Prowlarr"](releases=rels))
+
+    mid = app.db.upsert_movie(provider="tmdb", provider_id="9", title="Dune", year=2021, monitored=1)
+    result = await app.rss_poll()
+    assert result["checked_movies"] == 1
+    assert any(g.get("movie") == "Dune" for g in result["grabbed"])
+    assert app.db.get_movie(mid)["movie_status"] == "grabbed"

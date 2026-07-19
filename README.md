@@ -1,5 +1,8 @@
 # LLMarr
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+
 An MCP server that replicates the core of Sonarr/Radarr/Lidarr — but driven
 entirely by an LLM. It pulls metadata from a configurable provider (TMDB by
 default), finds torrents through **Prowlarr**, grabs them with a configured
@@ -135,6 +138,18 @@ scan the Plex movie section.
 Not full Sonarr custom formats — a lightweight, predictable heuristic
 (`configure_quality`): hard filters (ignored/required terms, min seeders, size
 bounds) then ranking by resolution preference, preferred terms, and seeders.
+
+## Development
+
+```bash
+pip install -e ".[dev]"
+pytest
+```
+
+The suite is fully offline: metadata/Prowlarr HTTP is driven by
+`httpx.MockTransport`, qBittorrent/Plex are faked, and the DB, config, path
+mapping and importer (real hardlinks in a temp dir) are exercised directly. No
+credentials or running services are required.
 
 ## Scope / status
 
