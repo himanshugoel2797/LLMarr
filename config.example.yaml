@@ -1,0 +1,59 @@
+# Example LLMarr config. Copy to the path in $LLMARR_CONFIG (default
+# ~/.config/llmarr/config.yaml) or just configure everything through the MCP
+# tools — this file is written/updated by the server itself.
+
+metadata:
+  provider: tmdb
+  tmdb_api_key: null        # get a free v3 key from themoviedb.org
+  language: en-US
+
+prowlarr:
+  url: http://prowlarr:9696
+  api_key: null
+  indexer_ids: []           # empty = search all configured indexers
+
+download_clients:
+  qbit:
+    type: qbittorrent
+    url: http://qbittorrent:8080
+    username: admin
+    password: null
+    category: llmarr
+    save_path: /downloads   # path AS QBITTORRENT SEES IT
+default_download_client: qbit
+
+plex:
+  url: http://plex:32400
+  token: null               # X-Plex-Token
+  tv_section: TV Shows
+  movie_section: Movies
+
+# Same physical dir, seen by each container. Entries in a group are equivalent.
+path_mappings:
+  - {group: dl, context: qbittorrent, path: /downloads}
+  - {group: dl, context: plex,        path: /data/torrents}
+  - {group: dl, context: local,       path: /mnt/media/dl}
+
+root_folders:
+  - {name: tv-main, media_type: tv, context: local, path: /mnt/media/tv}
+
+quality:
+  preferred_resolutions: [1080p, 720p]
+  required_terms: []
+  ignored_terms: [cam, ts, telesync]
+  prefer_terms: [web-dl, webrip, bluray, x265, hevc]
+  min_seeders: 1
+  min_size_mb: 0
+  max_size_mb: 0
+
+rss:
+  enabled: true
+  interval_minutes: 30
+  auto_grab: true
+
+importer:
+  enabled: true
+  mode: hardlink            # hardlink | copy | move
+  rename: true             # Sonarr/Radarr-style file naming
+  work_context: local      # the namespace LLMarr itself can read/write
+  min_video_mb: 50         # skip samples / stray small files
