@@ -1,0 +1,104 @@
+# AGENTS.md — guidance for coding agents working on LLMarr
+
+LLMarr is an MCP server that replicates Sonarr/Radarr-style media automation but
+is driven entirely by an LLM: TMDB metadata → Prowlarr torrent search →
+qBittorrent grab → hardlink import into an organised library → Plex scan, plus a
+background RSS auto-grab loop. TV and movies are both supported. Prowlarr is
+assumed to be available.
+
+## Ground rules
+
+- **Python 3.11+**, stdlib style. Match the surrounding code: type hints,
+  `from __future__ import annotations`, module-level docstrings explaining *why*.
+- **Everything is configurable through MCP tools.** If you add a setting, add the
+  config field *and* a tool to change it, and make sure it round-trips through
+  the YAML store.
+- **Never break offline testability.** All network I/O goes through a small
+  number of seams (see below) that tests fake. Don't call `httpx`/clients from
+  places that can't be mocked.
+- Run `pytest` before finishing. Keep it green and add tests for new behaviour.
+
+## Layout
+
+```
+llmarr/
+  config.py      pydantic models + ConfigStore (YAML, thread-safe, secret redaction)
+  db.py          SQLite: series, episodes, movies, downloads, grab_history, kv (+ migrations)
+  pathmap.py     translate() paths between container namespaces (single-host = passthrough)
+  metadata/      MetadataProvider ABC + TMDB (TV + movies)
+  indexers/      Prowlarr search client + Release model
+  download/      DownloadClient ABC + qBittorrent
+  notify/        Plex library scan
+  importer.py    hardlink/copy/move into <root>/Show (Year)/Season NN/… + movie layout
+  selector.py    quality filter + ranking (lightweight, NOT Sonarr custom formats)
+  parsing.py     SxxExx / season-pack / resolution parsing
+  core.py        App engine — the glue used by BOTH tools and the RSS poller
+  rss/poller.py  asyncio background loop (auto-grab + import), reads config each tick
+  auth.py        static bearer-token middleware for the HTTP transport
+  server.py      FastMCP instance + all ~45 tools + lifespan (starts poller)
+  __main__.py    stdio (default) or streamable-http entrypoint
+```
+
+`core.App` is the heart. Tools in `server.py` are thin wrappers over `App`
+methods; the poller calls the same `App` methods. Put logic in `App`, not in
+tool functions, so it's reachable from both and testable without the MCP layer.
+
+## Key design decisions (don't relitigate without reason)
+
+- **Single-host by default.** `config.single_host=True` → `pathmap.translate`
+  passes unmapped paths through unchanged, so a normal one-host install needs
+  **zero path mappings**. Split-container installs set it false and define
+  mappings; unmapped paths then raise. The author runs single-host.
+- **Path contexts** are arbitrary labels grouped per physical dir. The download
+  client's context label is always `"qbittorrent"`; the importer works in
+  `importer.work_context` (default `"local"`) — the namespace LLMarr itself can
+  read/write. Hardlinks need the download dir and library root on the same
+  filesystem *in that context*.
+- **Auth = one static bearer token**, HTTP transport only (stdio is local/trusted).
+  Auto-generated + persisted on first HTTP start, printed to stderr, reused
+  across restarts. Deliberately NOT OAuth — this is a single-user homelab tool.
+- **Quality selection is a heuristic**, not custom formats: hard filters
+  (ignored/required terms, seeders, size) then rank by resolution/preferred
+  terms/seeders. Keep it predictable.
+
+## Testing conventions (`tests/`)
+
+- `pip install -e ".[dev]"; pytest`. `asyncio_mode = "auto"` (no `@pytest.mark`).
+- Network seams are faked in `conftest.py`: `FakeProvider`, `FakeProwlarr`,
+  `FakeDownloadClient`, `FakePlex`. For code that must exercise the real HTTP
+  client (TMDB, Prowlarr), use the `mock_httpx` fixture (`httpx.MockTransport`).
+- `store`/`db`/`app` fixtures build real instances in `tmp_path`.
+- To fake a service on an `App`, monkeypatch the *factory method*
+  (`app.provider`, `app.prowlarr`, `app.plex`) — except `grab`/`refresh` which
+  construct the download client via `core.get_client`, so patch
+  `llmarr.core.get_client` there.
+- `@mcp.tool()` returns the **plain function**, so server tools are called
+  directly in tests after `monkeypatch.setattr(server.state, "app", app)`.
+- The importer is tested against **real files + real hardlinks** (inode checks).
+
+## Gotchas
+
+- `db.upsert_episode` / `upsert_movie` deliberately do NOT overwrite
+  `status`/`file_path` on metadata refresh — only title/air_date update.
+- Secrets (`api_key`, `token`, `password`, `auth_token`) are masked by
+  `get_config`; reveal the auth token via the dedicated `get_auth_token` tool.
+- The RSS poller re-reads config each tick, so config changes apply without a
+  restart (except the HTTP auth token, which is bound at server start).
+- Only qBittorrent, TMDB, Prowlarr, Plex are implemented. The ABCs exist so new
+  providers/clients slot in without touching `core`.
+
+## Not yet implemented (good next tasks)
+
+- Full Sonarr custom-format quality profiles.
+- Double-episode file parsing (`S01E01E02`).
+- Download clients beyond qBittorrent (Transmission/Deluge) via `DownloadClient`.
+- Lidarr-style music. OAuth for MCP clients that require it.
+
+## Deploy / run
+
+- Local MCP client: stdio, `{ "command": "llmarr" }`.
+- Persistent HTTP service: `LLMARR_TRANSPORT=streamable-http llmarr` — binds
+  `127.0.0.1:8000`, endpoint `/mcp`, bearer-token protected. See README's
+  Cloudflare Tunnel section for remote exposure.
+- Config: `$LLMARR_CONFIG` (default `~/.config/llmarr/config.yaml`); state:
+  `$LLMARR_DB` (default `~/.local/share/llmarr/llmarr.db`).

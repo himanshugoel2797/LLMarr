@@ -104,6 +104,46 @@ dance.
   tools, or set your own value in `config.yaml`. Disable auth entirely (e.g.
   behind your own reverse proxy) with `configure_server(require_auth=false)`.
 
+## Remote access via Cloudflare Tunnel
+
+The HTTP server binds `127.0.0.1:8000` with the MCP endpoint at **`/mcp`**. Run
+`cloudflared` on the same machine and point it at the local service — no ports
+need to be opened, and Cloudflare terminates TLS while the bearer token
+authenticates the MCP client.
+
+Quick tunnel (ephemeral hostname, good for testing):
+
+```bash
+LLMARR_TRANSPORT=streamable-http llmarr           # terminal 1: binds 127.0.0.1:8000
+cloudflared tunnel --url http://localhost:8000    # terminal 2: prints a *.trycloudflare.com URL
+```
+
+Named tunnel (stable hostname, for prod) — in your tunnel's ingress config:
+
+```yaml
+ingress:
+  - hostname: llmarr.example.com
+    service: http://localhost:8000
+  - service: http_status:404
+```
+
+Either way the URL you give your MCP client is the tunnel hostname **plus
+`/mcp`**, with the token from the server's startup banner:
+
+```json
+{
+  "mcpServers": {
+    "llmarr": {
+      "url": "https://llmarr.example.com/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}
+```
+
+Keep `LLMARR_HOST=127.0.0.1` (the default) so the service is reachable only
+through the tunnel, not on your LAN.
+
 ## First-run setup (all via tools)
 
 1. `configure_metadata(tmdb_api_key="…")`
