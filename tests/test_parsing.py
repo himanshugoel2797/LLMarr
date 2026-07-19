@@ -86,6 +86,9 @@ def test_parse_absolute_episode(title, expected):
         ("[Group] Show 01~12 [BD]", (1, 12)),
         ("[Group] Show E01-E24", (1, 24)),
         ("[Group] Show - 12", None),  # single episode, not a range
+        # "Season N-M" is a season span, NOT an episode range:
+        ("[Tenrai-Sensei] Amagami SS (Season 1-2 + OVAs) [BD]", None),
+        ("[Group] Show Seasons 1-3 [1080p]", None),
     ],
 )
 def test_parse_absolute_range(title, expected):

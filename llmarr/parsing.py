@@ -83,12 +83,20 @@ def parse_absolute_episode(title: str) -> Optional[int]:
     return None
 
 
+# "Season 1-2" / "Seasons 1-3" is a span of seasons, not an episode range.
+_SEASON_SPAN = re.compile(r"seasons?\s*[\[\(]?\s*$", re.IGNORECASE)
+
+
 def parse_absolute_range(title: str) -> Optional[tuple[int, int]]:
-    """Return (start, end) for an anime batch/range like ``(01-28)``."""
-    for a, b in _ABS_RANGE.findall(title):
-        start, end = int(a), int(b)
-        if 0 < start < end and end - start <= 400:
-            return start, end
+    """Return (start, end) for an anime episode batch/range like ``(01-28)``.
+    Ignores "Season N-M" spans, which mean seasons rather than episodes."""
+    for m in _ABS_RANGE.finditer(title):
+        start, end = int(m.group(1)), int(m.group(2))
+        if not (0 < start < end and end - start <= 400):
+            continue
+        if _SEASON_SPAN.search(title[: m.start() + 1]):
+            continue  # preceded by "Season" — a season span, not episodes
+        return start, end
     return None
 
 
