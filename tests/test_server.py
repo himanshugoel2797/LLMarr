@@ -24,6 +24,10 @@ async def test_expected_tools_registered():
         "search_movies", "add_movie", "grab_movie",
         "search_releases", "grab_release", "grab_episode",
         "refresh_downloads", "import_download", "rss_poll_now", "rss_status",
+        "refresh_series", "set_episode_monitored", "bulk_activate_series",
+        "reset_episode", "reset_movie", "mark_download_failed", "retry_download",
+        "forget_release", "clear_grab_history", "remove_download_client",
+        "rotate_oauth_keys",
     }
     missing = expected - names
     assert not missing, f"missing tools: {missing}"

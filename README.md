@@ -277,14 +277,15 @@ for a single anime lookup, or make it the default with
 | Area | Tools |
 | --- | --- |
 | Setup | `setup_status` (guided checklist + enumerations — call first) |
-| Config | `get_config`, `configure_metadata`, `configure_prowlarr`, `configure_download_client`, `configure_plex`, `configure_root_folder`, `configure_quality`, `configure_rss`, `configure_import` |
-| Server / auth | `configure_server`, `auth_token`, `oauth_info` |
+| Config | `get_config`, `configure_metadata`, `configure_prowlarr`, `configure_download_client`, `remove_download_client`, `configure_plex`, `configure_root_folder`, `configure_quality`, `configure_rss`, `configure_import` |
+| Server / auth | `configure_server`, `auth_token`, `rotate_oauth_keys`, `oauth_info` |
 | Path maps | `add_path_mapping`, `list_path_mappings`, `remove_path_mapping`, `translate_path` |
 | Diagnostics | `test_connections` |
-| Series | `search_series`, `add_series`, `activate_series`, `list_series`, `get_series`, `list_episodes`, `set_series_monitored`, `remove_series` |
+| Series | `search_series`, `add_series`, `refresh_series`, `activate_series`, `bulk_activate_series`, `list_series`, `get_series`, `list_episodes`, `set_series_monitored`, `set_episode_monitored`, `remove_series` |
 | Movies | `search_movies`, `add_movie`, `list_movies`, `get_movie`, `set_movie_monitored`, `remove_movie`, `search_movie_releases`, `grab_movie` |
 | Releases | `search_releases`, `search_episode_releases`, `grab_release`, `grab_episode`, `grab_season` |
 | Downloads | `list_downloads`, `download_queue`, `get_download`, `refresh_downloads`, `import_download`, `remove_download` (cancel) |
+| Recovery | `reset_episode`, `reset_movie`, `mark_download_failed`, `retry_download`, `forget_release`, `clear_grab_history` |
 | Plex | `plex_login_start`, `plex_login_poll`, `plex_discover_libraries`, `import_plex_library`, `plex_scan` |
 | Root folders | `configure_root_folder`, `list_root_folders`, `remove_root_folder` |
 | RSS | `rss_status`, `rss_poll_now` |

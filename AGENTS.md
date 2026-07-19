@@ -204,7 +204,19 @@ in sync when adding a config step or provider/client type.
 
 ## Not yet implemented (good next tasks)
 
-- Full Sonarr custom-format quality profiles + quality-upgrade replacement.
+- Full Sonarr custom-format quality profiles.
+- Quality upgrades (G4, deliberately deferred): `downloads.quality` is written
+  but never read; there is no upgrade path. A proper version needs (a) a
+  `quality.upgrade_until` resolution cutoff (+ configure_quality arg), (b) a
+  resolution-rank comparator, (c) `quality` columns on episodes/movies populated
+  on import, (d) a `downloads.is_upgrade` flag so `Importer` can *replace* the
+  existing file (today `_place` returns "exists" and skips — with rename=True the
+  upgraded file has the same dst path, so it must overwrite), (e) an rss_poll
+  upgrade pass that grabs a strictly-better release *without* flipping the
+  episode/movie out of "downloaded" (so a failed upgrade can't corrupt state —
+  grab with a `mark_status=False`), and (f) an active-upgrade guard to avoid
+  re-grabbing while one is in flight. Left as a note because the replace-on-import
+  + status-preservation interactions are not cleanly contained.
 - Download clients beyond qBittorrent (Transmission/Deluge) via `DownloadClient`.
 - Lidarr-style music.
 - (Done — G6) Bulk-activate catalogued Plex imports: `bulk_activate_series`
