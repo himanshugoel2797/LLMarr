@@ -804,6 +804,70 @@ async def remove_download(download_id: int, delete_files: bool = False) -> dict:
 # Plex
 # --------------------------------------------------------------------------- #
 @mcp.tool()
+async def plex_login_start(product: str = "LLMarr") -> dict:
+    """Begin browser-based Plex sign-in (no manual token needed). Returns a short
+    code to enter at https://plex.tv/link; then call ``plex_login_poll`` to finish.
+    Reuses a persistent device identity across logins."""
+    import uuid
+
+    from . import plexauth
+
+    cid = app().config.plex.client_id
+    if not cid:
+        cid = str(uuid.uuid4())
+        app().store.mutate(lambda c: setattr(c.plex, "client_id", cid))
+    pin = await plexauth.request_pin(cid, product)
+    app().db.set_kv("plex_pin_id", str(pin["id"]))
+    return {
+        "link_url": plexauth.LINK_URL,
+        "code": pin["code"],
+        "instructions": f"Open {plexauth.LINK_URL}, sign in if asked, and enter code "
+        f"{pin['code']}. Then call plex_login_poll.",
+    }
+
+
+@mcp.tool()
+async def plex_login_poll(
+    url: str = "http://localhost:32400", max_wait_seconds: int = 90
+) -> dict:
+    """Wait for the pending Plex login to be approved, then store the token and
+    Plex URL. Blocks up to ``max_wait_seconds``; if not yet approved, call again."""
+    import asyncio
+
+    from . import plexauth
+
+    pin_id = app().db.get_kv("plex_pin_id")
+    cid = app().config.plex.client_id
+    if not pin_id or not cid:
+        return {"error": "No pending login — call plex_login_start first."}
+
+    waited = 0
+    while waited <= max_wait_seconds:
+        token = await plexauth.poll_token(pin_id, cid)
+        if token:
+            def _m(c):
+                c.plex.token = token
+                if url:
+                    c.plex.url = url
+            app().store.mutate(_m)
+            app().db.set_kv("plex_pin_id", "")
+            return {"authorized": True, "url": app().config.plex.url,
+                    "message": "Plex linked. Use plex_discover_libraries to set root folders."}
+        await asyncio.sleep(3)
+        waited += 3
+    return {"authorized": False, "message": "Not approved yet — enter the code, then poll again."}
+
+
+@mcp.tool()
+async def plex_discover_libraries() -> list[dict]:
+    """List Plex library sections with their on-disk paths — use this to pick the
+    section names for configure_plex and the paths for configure_root_folder."""
+    import asyncio
+
+    return await asyncio.to_thread(app().plex().libraries)
+
+
+@mcp.tool()
 async def scan_plex(section: Optional[str] = None, path: Optional[str] = None) -> dict:
     """Trigger a Plex library scan. ``path`` (in Plex's own namespace) narrows
     the scan to one directory."""

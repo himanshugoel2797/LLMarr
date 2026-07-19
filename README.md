@@ -189,7 +189,10 @@ token from the server's startup banner:
 1. `configure_metadata(tmdb_api_key="…")`
 2. `configure_prowlarr(url="http://localhost:9696", api_key="…")`
 3. `configure_download_client("qbit", url="http://localhost:8080", username="…", password="…", save_path="/data/downloads")`
-4. `configure_plex(url="http://localhost:32400", token="…", tv_section="TV Shows")`
+4. **Plex** — either paste a token with `configure_plex(url=…, token=…)`, or sign
+   in via the browser: `plex_login_start` → open https://plex.tv/link, enter the
+   code → `plex_login_poll`. Then `plex_discover_libraries` shows your sections +
+   paths so you can set the right section names and root folders.
 5. `configure_root_folder("tv-main", "/data/media/tv")` (and a `movie` one)
 6. Single host? You're done — skip path mappings. Split containers?
    `configure_server(single_host=false)` then `add_path_mapping(...)` per namespace.
@@ -274,7 +277,7 @@ for a single anime lookup, or make it the default with
 | Movies | `search_movies`, `add_movie`, `list_movies`, `get_movie`, `set_movie_monitored`, `remove_movie`, `search_movie_releases`, `grab_movie` |
 | Releases | `search_releases`, `search_episode_releases`, `grab_release`, `grab_episode` |
 | Downloads | `list_downloads`, `download_status`, `refresh_downloads`, `import_download`, `remove_download` |
-| Plex | `scan_plex` |
+| Plex | `plex_login_start`, `plex_login_poll`, `plex_discover_libraries`, `scan_plex` |
 | RSS | `rss_status`, `rss_poll_now` |
 
 ## Quality selection

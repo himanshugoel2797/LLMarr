@@ -36,6 +36,20 @@ class PlexNotifier:
             section.update()
         return {"ok": True, "section": section_name, "path": path}
 
+    def libraries(self) -> list[dict]:
+        """List library sections with their on-disk locations (for choosing root
+        folders and section names)."""
+        out = []
+        for s in self.server.library.sections():
+            out.append(
+                {
+                    "title": s.title,
+                    "type": s.type,  # "show" | "movie" | "artist" | ...
+                    "locations": list(getattr(s, "locations", []) or []),
+                }
+            )
+        return out
+
     def test(self) -> dict:
         sections = [
             {"title": s.title, "type": s.type} for s in self.server.library.sections()

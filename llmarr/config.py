@@ -54,6 +54,8 @@ class DownloadClientConfig(BaseModel):
 class PlexConfig(BaseModel):
     url: Optional[str] = None  # e.g. http://plex:32400
     token: Optional[str] = None
+    # Stable device identity for the plex.tv PIN login flow (generated once).
+    client_id: Optional[str] = None
     # Library section name to scan after a TV grab lands.
     tv_section: str = "TV Shows"
     movie_section: str = "Movies"

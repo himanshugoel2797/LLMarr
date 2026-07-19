@@ -105,6 +105,11 @@ tool functions, so it's reachable from both and testable without the MCP layer.
   flagged series — never for standard TV, to avoid false `Show - 12` matches.
   Absolute parser is regex-heavy; if you touch it, keep the false-positive tests
   in test_parsing.py green (resolutions/years must not parse as episodes).
+- Plex auth: either a manual token (`configure_plex`) or browser login
+  (`plexauth.py` PIN flow → `plex_login_start`/`plex_login_poll`, persistent
+  `plex.client_id`, pending pin id in the `kv` table). `plex_discover_libraries`
+  lists sections + on-disk paths for choosing root folders. When Plex runs
+  natively (not a container) local == plex namespace, so no local↔plex mapping.
 - Only qBittorrent, Prowlarr, Plex are implemented for their layers. The ABCs
   exist so new providers/clients slot in without touching `core`.
 
