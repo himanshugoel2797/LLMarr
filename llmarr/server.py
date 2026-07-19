@@ -643,6 +643,18 @@ def set_series_monitored(series_id: int, monitored: bool, season: Optional[int] 
 
 
 @tool
+def set_episode_monitored(episode_id: int, monitored: bool) -> dict:
+    """Monitor/unmonitor a single episode for auto-grab (finer-grained than
+    set_series_monitored, which does a whole series/season). Only monitored,
+    still-missing episodes are picked up by the RSS poller."""
+    ep = app().db.get_episode(episode_id)
+    if not ep:
+        return {"error": f"No episode with id {episode_id}"}
+    app().db.set_episode_monitored(episode_id, monitored)
+    return app().db.get_episode(episode_id)
+
+
+@tool
 async def activate_series(
     series_id: int,
     provider: Optional[Literal["tmdb", "jikan"]] = None,

@@ -302,6 +302,11 @@ class Database:
         else:
             self.execute("UPDATE episodes SET status=? WHERE id=?", (status, episode_id))
 
+    def set_episode_monitored(self, episode_id: int, monitored: bool):
+        self.execute(
+            "UPDATE episodes SET monitored=? WHERE id=?", (1 if monitored else 0, episode_id)
+        )
+
     def set_monitored(self, series_id: int, monitored: bool, season: Optional[int] = None):
         val = 1 if monitored else 0
         if season is None:

@@ -94,6 +94,17 @@ def test_auth_token_consolidated(wired):
     assert wired.config.server.auth_token == "tok"
 
 
+def test_set_episode_monitored(wired):
+    sid = wired.db.upsert_series(provider="tmdb", provider_id="1", title="Show")
+    e = wired.db.upsert_episode(sid, 1, 1)
+    out = server.set_episode_monitored(e, False)
+    assert out["monitored"] == 0
+    assert wired.db.get_episode(e)["monitored"] == 0
+    server.set_episode_monitored(e, True)
+    assert wired.db.get_episode(e)["monitored"] == 1
+    assert "error" in server.set_episode_monitored(999, True)
+
+
 def test_remove_series(wired):
     sid = wired.db.upsert_series(provider="tmdb", provider_id="1", title="Show")
     out = server.remove_series(sid)
