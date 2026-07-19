@@ -93,7 +93,7 @@ def _print_banner(mode, host, port, path, token, sc) -> None:
             f"   Token:      {token}",
             "   Send it on every request:  Authorization: Bearer <token>",
         ]
-    lines += ["   (rotate with the rotate_auth_token tool)", "=" * 70, ""]
+    lines += ['   (rotate with the auth_token tool: auth_token("rotate"))', "=" * 70, ""]
     print("\n".join(lines), file=sys.stderr)
 
 

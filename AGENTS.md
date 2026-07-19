@@ -130,8 +130,12 @@ in sync when adding a config step or provider/client type.
   `{query,count,releases}` envelopes; list_series/list_movies return compact rows
   (full=true for all fields, limit to cap). configure_* return the section they
   set. Renames done: set_monitored→set_series_monitored, scan_plex→plex_scan,
-  download_status→get_download. Deferred (not yet done): full error-contract
-  unification, auth-tool consolidation, config value-unsetting.
+  download_status→get_download. Error contract unified: tools use `@tool`
+  (= `@mcp.tool()` + `_guard`) so any exception becomes `{"error", "hint"}` (hint
+  keyed off exception type); FastMCP emits no output schema so this is safe for
+  list-returning tools too. Auth tools consolidated into one
+  `auth_token(action, token)`. Optional config fields clear on `""` via
+  `_set_opt` (None still = leave unchanged).
 - `activate_series(series_id, provider, provider_id)`: converts a catalogued
   (plex-imported, no-episode) series into a monitored one — fetches episodes from
   the provider, re-keys the series row to that provider/id, and marks episodes

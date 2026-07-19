@@ -100,9 +100,9 @@ dance.
   every restart.
 - Clients send `Authorization: Bearer <token>` on every request; anything else
   gets `401`.
-- Manage it with the `get_auth_token`, `set_auth_token`, and `rotate_auth_token`
-  tools, or set your own value in `config.yaml`. Disable auth entirely (e.g.
-  behind your own reverse proxy) with `configure_server(require_auth=false)`.
+- Manage it with the `auth_token` tool (`auth_token("get"|"set"|"rotate")`), or
+  set your own value in `config.yaml`. Disable auth entirely (e.g. behind your own
+  reverse proxy) with `configure_server(require_auth=false)`.
 
 ### OAuth mode (for claude.ai custom connectors / mobile apps)
 
@@ -278,7 +278,7 @@ for a single anime lookup, or make it the default with
 | --- | --- |
 | Setup | `setup_status` (guided checklist + enumerations — call first) |
 | Config | `get_config`, `configure_metadata`, `configure_prowlarr`, `configure_download_client`, `configure_plex`, `configure_root_folder`, `configure_quality`, `configure_rss`, `configure_import` |
-| Server / auth | `configure_server`, `get_auth_token`, `set_auth_token`, `rotate_auth_token`, `oauth_info` |
+| Server / auth | `configure_server`, `auth_token`, `oauth_info` |
 | Path maps | `add_path_mapping`, `list_path_mappings`, `remove_path_mapping`, `translate_path` |
 | Diagnostics | `test_connections` |
 | Series | `search_series`, `add_series`, `activate_series`, `list_series`, `get_series`, `list_episodes`, `set_series_monitored`, `remove_series` |

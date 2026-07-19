@@ -73,16 +73,16 @@ def test_configure_server_allowed_hosts(wired):
     assert wired.config.server.allowed_hosts == ["arr.example.com"]
 
 
-def test_auth_token_tools(wired):
-    assert server.get_auth_token()["configured"] is False
-    t = server.set_auth_token("mytoken")["auth_token"]
+def test_auth_token_tool(wired):
+    assert server.auth_token("get")["configured"] is False
+    t = server.auth_token("set", "mytoken")["auth_token"]
     assert t == "mytoken"
-    assert server.get_auth_token()["auth_token"] == "mytoken"
-    rotated = server.rotate_auth_token()["auth_token"]
+    assert server.auth_token("get")["auth_token"] == "mytoken"
+    rotated = server.auth_token("rotate")["auth_token"]
     assert rotated != "mytoken"
-    assert server.get_auth_token()["auth_token"] == rotated
+    assert server.auth_token("get")["auth_token"] == rotated
 
 
 def test_get_config_redacts_auth_token(wired):
-    server.set_auth_token("supersecret")
+    server.auth_token("set", "supersecret")
     assert server.get_config()["server"]["auth_token"] == "***set***"

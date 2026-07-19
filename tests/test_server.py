@@ -72,6 +72,28 @@ def test_get_series_not_found(wired):
     assert "error" in server.get_series(999)
 
 
+async def test_guard_converts_exception_to_error_dict(wired):
+    # Default provider is tmdb with no key -> provider() raises ValueError, which
+    # the @tool guard turns into an {"error", "hint"} dict instead of surfacing.
+    out = await server.search_series("anything")
+    assert isinstance(out, dict) and "error" in out
+    assert "hint" in out  # ValueError -> configure hint
+
+
+def test_configure_clears_with_empty_string(wired):
+    server.configure_prowlarr(url="http://p", api_key="k")
+    assert wired.config.prowlarr.url == "http://p"
+    server.configure_prowlarr(url="")  # clear just the url
+    assert wired.config.prowlarr.url is None
+    assert wired.config.prowlarr.api_key == "k"  # untouched (None = leave)
+
+
+def test_auth_token_consolidated(wired):
+    assert server.auth_token("get")["configured"] is False
+    server.auth_token("set", "tok")
+    assert wired.config.server.auth_token == "tok"
+
+
 def test_remove_series(wired):
     sid = wired.db.upsert_series(provider="tmdb", provider_id="1", title="Show")
     out = server.remove_series(sid)

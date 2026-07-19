@@ -80,9 +80,64 @@ def app() -> App:
 
 
 # --------------------------------------------------------------------------- #
+# Uniform error contract: every tool returns {"error", "hint"} on failure instead
+# of surfacing a raw exception. `@tool` = `@mcp.tool()` composed with this guard.
+# --------------------------------------------------------------------------- #
+def _as_error(exc: Exception) -> dict:
+    import httpx
+
+    msg = str(exc) or exc.__class__.__name__
+    hint = None
+    module = exc.__class__.__module__ or ""
+    if isinstance(exc, ValueError):
+        hint = "A required setting is missing — run setup_status or the relevant configure_* tool."
+    elif isinstance(exc, httpx.HTTPError):
+        hint = "An external service (metadata/Prowlarr) is unreachable — check its URL/key with test_connections."
+    elif module.startswith("plexapi") or "plex" in module:
+        hint = "Plex request failed — verify the Plex URL/token (plex_login_start) and that Plex is running."
+    elif "qbittorrent" in module:
+        hint = "qBittorrent request failed — check the client URL/credentials with test_connections."
+    return {"error": msg, **({"hint": hint} if hint else {})}
+
+
+def _guard(fn):
+    import functools
+    import inspect
+
+    if inspect.iscoroutinefunction(fn):
+        @functools.wraps(fn)
+        async def aw(*a, **k):
+            try:
+                return await fn(*a, **k)
+            except Exception as exc:  # noqa: BLE001 - uniform error contract
+                return _as_error(exc)
+        return aw
+
+    @functools.wraps(fn)
+    def sw(*a, **k):
+        try:
+            return fn(*a, **k)
+        except Exception as exc:  # noqa: BLE001
+            return _as_error(exc)
+    return sw
+
+
+def tool(fn):
+    """Register an MCP tool whose exceptions become {"error", "hint"} dicts."""
+    return mcp.tool()(_guard(fn))
+
+
+def _set_opt(obj, attr: str, value) -> None:
+    """Partial-update helper for optional fields: ``None`` leaves the value
+    unchanged, an empty string clears it (sets ``None``), anything else sets it."""
+    if value is not None:
+        setattr(obj, attr, None if value == "" else value)
+
+
+# --------------------------------------------------------------------------- #
 # Configuration
 # --------------------------------------------------------------------------- #
-@mcp.tool()
+@tool
 async def setup_status(check_connections: bool = False) -> dict:
     """Guided setup & diagnostics — CALL THIS FIRST when configuring LLMarr or
     figuring out what's missing. Returns an ordered checklist (each step marked
@@ -105,13 +160,13 @@ async def setup_status(check_connections: bool = False) -> dict:
     return setupmod.build_status(app(), plex_libraries=plex_libraries, connections=conns)
 
 
-@mcp.tool()
+@tool
 def get_config() -> dict:
     """Return the current configuration with secrets redacted."""
     return app().store.redacted()
 
 
-@mcp.tool()
+@tool
 def configure_metadata(
     tmdb_api_key: Optional[str] = None,
     provider: Optional[Literal["tmdb", "jikan"]] = None,
@@ -121,21 +176,20 @@ def configure_metadata(
     """Set the default metadata provider and its settings. ``provider`` is
     ``tmdb`` (TV+movies, needs ``tmdb_api_key``) or ``jikan`` (anime, no key).
     ``anime_api_url`` overrides the Jikan-compatible anime API base URL (defaults
-    to Tenrai, api.tenrai.org/v1)."""
+    to Tenrai, api.tenrai.org/v1). Pass "" for tmdb_api_key to clear it."""
     def _m(c):
         if provider is not None:
             c.metadata.provider = provider
-        if tmdb_api_key is not None:
-            c.metadata.tmdb_api_key = tmdb_api_key
-        if language is not None:
+        _set_opt(c.metadata, "tmdb_api_key", tmdb_api_key)
+        if language:
             c.metadata.language = language
-        if anime_api_url is not None:
+        if anime_api_url:
             c.metadata.anime_api_url = anime_api_url
     app().store.mutate(_m)
     return app().store.redacted()["metadata"]
 
 
-@mcp.tool()
+@tool
 def configure_prowlarr(
     url: Optional[str] = None,
     api_key: Optional[str] = None,
@@ -144,17 +198,15 @@ def configure_prowlarr(
     """Configure the Prowlarr connection. ``indexer_ids`` optionally restricts
     searches to specific indexers (empty list = all)."""
     def _m(c):
-        if url is not None:
-            c.prowlarr.url = url
-        if api_key is not None:
-            c.prowlarr.api_key = api_key
+        _set_opt(c.prowlarr, "url", url)
+        _set_opt(c.prowlarr, "api_key", api_key)
         if indexer_ids is not None:
             c.prowlarr.indexer_ids = indexer_ids
     app().store.mutate(_m)
     return app().store.redacted()["prowlarr"]
 
 
-@mcp.tool()
+@tool
 def configure_download_client(
     name: str,
     url: Optional[str] = None,
@@ -173,16 +225,12 @@ def configure_download_client(
         existing = c.download_clients.get(name)
         cfg = existing or DownloadClientConfig(type=type)
         cfg.type = type
-        if url is not None:
-            cfg.url = url
-        if username is not None:
-            cfg.username = username
-        if password is not None:
-            cfg.password = password
-        if category is not None:
+        _set_opt(cfg, "url", url)
+        _set_opt(cfg, "username", username)
+        _set_opt(cfg, "password", password)
+        if category:
             cfg.category = category
-        if save_path is not None:
-            cfg.save_path = save_path
+        _set_opt(cfg, "save_path", save_path)
         c.download_clients[name] = cfg
         if make_default or c.default_download_client is None:
             c.default_download_client = name
@@ -190,7 +238,7 @@ def configure_download_client(
     return app().store.redacted()["download_clients"][name]
 
 
-@mcp.tool()
+@tool
 def configure_plex(
     url: Optional[str] = None,
     token: Optional[str] = None,
@@ -199,19 +247,17 @@ def configure_plex(
 ) -> dict:
     """Configure the Plex connection and library section names."""
     def _m(c):
-        if url is not None:
-            c.plex.url = url
-        if token is not None:
-            c.plex.token = token
-        if tv_section is not None:
+        _set_opt(c.plex, "url", url)
+        _set_opt(c.plex, "token", token)
+        if tv_section:
             c.plex.tv_section = tv_section
-        if movie_section is not None:
+        if movie_section:
             c.plex.movie_section = movie_section
     app().store.mutate(_m)
     return app().store.redacted()["plex"]
 
 
-@mcp.tool()
+@tool
 def add_path_mapping(group: str, context: str, path: str) -> list[dict]:
     """Add one leg of a path equivalence. Entries sharing a ``group`` refer to
     the same physical directory as seen by different containers. ``context`` is a
@@ -232,13 +278,13 @@ def add_path_mapping(group: str, context: str, path: str) -> list[dict]:
     return [m.model_dump() for m in app().config.path_mappings]
 
 
-@mcp.tool()
+@tool
 def list_path_mappings() -> list[dict]:
     """List all configured path mappings."""
     return [m.model_dump() for m in app().config.path_mappings]
 
 
-@mcp.tool()
+@tool
 def remove_path_mapping(group: str, context: Optional[str] = None) -> list[dict]:
     """Remove a path-mapping group, or a single context leg within it."""
     def _m(c):
@@ -251,7 +297,7 @@ def remove_path_mapping(group: str, context: Optional[str] = None) -> list[dict]
     return [m.model_dump() for m in app().config.path_mappings]
 
 
-@mcp.tool()
+@tool
 def translate_path(path: str, from_context: str, to_context: str) -> dict:
     """Translate a path between two contexts using the configured mappings."""
     from . import pathmap
@@ -260,7 +306,7 @@ def translate_path(path: str, from_context: str, to_context: str) -> dict:
     return {"input": path, "from": from_context, "to": to_context, "result": result}
 
 
-@mcp.tool()
+@tool
 def configure_root_folder(
     name: str, path: str, media_type: Literal["tv", "movie"] = "tv", context: str = "local"
 ) -> list[dict]:
@@ -275,13 +321,13 @@ def configure_root_folder(
     return [r.model_dump() for r in app().config.root_folders]
 
 
-@mcp.tool()
+@tool
 def list_root_folders() -> list[dict]:
     """List configured library root folders."""
     return [r.model_dump() for r in app().config.root_folders]
 
 
-@mcp.tool()
+@tool
 def remove_root_folder(name: str) -> list[dict]:
     """Remove a library root folder by name. Returns the remaining folders."""
     def _m(c):
@@ -290,7 +336,7 @@ def remove_root_folder(name: str) -> list[dict]:
     return [r.model_dump() for r in app().config.root_folders]
 
 
-@mcp.tool()
+@tool
 def configure_quality(
     preferred_resolutions: Optional[list[str]] = None,
     required_terms: Optional[list[str]] = None,
@@ -321,7 +367,7 @@ def configure_quality(
     return app().config.quality.model_dump()
 
 
-@mcp.tool()
+@tool
 def configure_import(
     enabled: Optional[bool] = None,
     mode: Optional[Literal["hardlink", "copy", "move"]] = None,
@@ -349,7 +395,7 @@ def configure_import(
     return app().config.importer.model_dump()
 
 
-@mcp.tool()
+@tool
 def configure_rss(
     enabled: Optional[bool] = None,
     interval_minutes: Optional[int] = None,
@@ -372,7 +418,7 @@ def configure_rss(
 # --------------------------------------------------------------------------- #
 # Server / auth / deployment mode
 # --------------------------------------------------------------------------- #
-@mcp.tool()
+@tool
 def configure_server(
     single_host: Optional[bool] = None,
     require_auth: Optional[bool] = None,
@@ -403,8 +449,7 @@ def configure_server(
                 c.server.require_auth = False
             else:
                 c.server.require_auth = True
-        if public_url is not None:
-            c.server.public_url = public_url
+        _set_opt(c.server, "public_url", public_url)
         if allowed_hosts is not None:
             c.server.allowed_hosts = allowed_hosts
         if allowed_origins is not None:
@@ -421,7 +466,7 @@ def configure_server(
     }
 
 
-@mcp.tool()
+@tool
 def oauth_info() -> dict:
     """Show the OAuth endpoint URLs to expect once the server runs in ``oauth``
     mode, for adding LLMarr as a claude.ai custom connector. Requires
@@ -441,39 +486,28 @@ def oauth_info() -> dict:
     }
 
 
-@mcp.tool()
-def get_auth_token() -> dict:
-    """Reveal the current HTTP bearer token (for configuring your MCP client).
-    Returns null if none is set — one is generated automatically on first HTTP
-    start. Only the TV/torrent stack is behind this; stdio needs no token."""
-    token = app().config.server.auth_token
-    return {
-        "auth_token": token,
-        "require_auth": app().config.server.require_auth,
-        "configured": bool(token),
-    }
-
-
-@mcp.tool()
-def set_auth_token(token: Optional[str] = None) -> dict:
-    """Set the HTTP bearer token to a specific value, or generate a fresh one if
-    omitted. Returns the token. Takes effect on the next HTTP server restart."""
-    new = token or generate_token()
+@tool
+def auth_token(
+    action: Literal["get", "set", "rotate"] = "get", token: Optional[str] = None
+) -> dict:
+    """Manage the HTTP bearer token (for configuring your MCP client; stdio needs
+    none). ``get`` reveals the current token; ``set`` stores ``token`` (or
+    generates one if omitted); ``rotate`` generates a fresh random token.
+    WARNING: ``set``/``rotate`` take effect on the next HTTP server restart and
+    lock out any client still using the old token."""
+    server = app().config.server
+    if action == "get":
+        return {"auth_token": server.auth_token, "require_auth": server.require_auth,
+                "configured": bool(server.auth_token)}
+    new = (token if action == "set" and token else generate_token())
     app().store.mutate(lambda c: setattr(c.server, "auth_token", new))
-    return {"auth_token": new}
-
-
-@mcp.tool()
-def rotate_auth_token() -> dict:
-    """Generate a new random HTTP bearer token, invalidating the old one. Takes
-    effect on the next HTTP server restart."""
-    return set_auth_token(None)
+    return {"auth_token": new, "action": action}
 
 
 # --------------------------------------------------------------------------- #
 # Connection tests
 # --------------------------------------------------------------------------- #
-@mcp.tool()
+@tool
 async def test_connections() -> dict:
     """Test connectivity to every configured service (metadata, Prowlarr,
     download client, Plex) and report status for each."""
@@ -511,7 +545,7 @@ async def test_connections() -> dict:
 # --------------------------------------------------------------------------- #
 # Metadata / library
 # --------------------------------------------------------------------------- #
-@mcp.tool()
+@tool
 async def search_series(query: str, provider: Optional[Literal["tmdb", "jikan"]] = None) -> list[dict]:
     """Search for TV series matching ``query``. ``provider`` overrides the default
     metadata source — use ``"jikan"`` for anime (MyAnimeList, no key) or
@@ -521,7 +555,7 @@ async def search_series(query: str, provider: Optional[Literal["tmdb", "jikan"]]
     return [r.model_dump() for r in results]
 
 
-@mcp.tool()
+@tool
 async def add_series(
     provider_id: str,
     monitored: bool = True,
@@ -553,7 +587,7 @@ def _compact(rows: list[dict], keys, limit: Optional[int]) -> list[dict]:
     return out[:limit] if limit else out
 
 
-@mcp.tool()
+@tool
 def list_series(limit: Optional[int] = None, full: bool = False) -> list[dict]:
     """List series in the library. Compact rows by default (id/title/year/
     monitored/status); pass ``full=true`` for all fields or ``limit`` to cap.
@@ -562,7 +596,7 @@ def list_series(limit: Optional[int] = None, full: bool = False) -> list[dict]:
     return rows[: limit or None] if full else _compact(rows, _SERIES_COMPACT, limit)
 
 
-@mcp.tool()
+@tool
 def get_series(series_id: int, include_episodes: bool = False) -> dict:
     """Get one series, optionally with its episode list and a status summary."""
     series = app().db.get_series(series_id)
@@ -579,7 +613,7 @@ def get_series(series_id: int, include_episodes: bool = False) -> dict:
     return result
 
 
-@mcp.tool()
+@tool
 def list_episodes(
     series_id: int,
     status: Optional[Literal["missing", "grabbed", "downloaded"]] = None,
@@ -594,7 +628,7 @@ def list_episodes(
     return rows[:limit] if limit else rows
 
 
-@mcp.tool()
+@tool
 def set_series_monitored(series_id: int, monitored: bool, season: Optional[int] = None) -> dict:
     """Monitor/unmonitor a whole series or a single season (mirrors
     set_movie_monitored)."""
@@ -602,7 +636,7 @@ def set_series_monitored(series_id: int, monitored: bool, season: Optional[int] 
     return get_series(series_id)
 
 
-@mcp.tool()
+@tool
 async def activate_series(
     series_id: int,
     provider: Optional[Literal["tmdb", "jikan"]] = None,
@@ -620,7 +654,7 @@ async def activate_series(
     )
 
 
-@mcp.tool()
+@tool
 def remove_series(series_id: int) -> dict:
     """Remove a series (and its episodes) from the library."""
     series = app().db.get_series(series_id)
@@ -633,7 +667,7 @@ def remove_series(series_id: int) -> dict:
 # --------------------------------------------------------------------------- #
 # Movies
 # --------------------------------------------------------------------------- #
-@mcp.tool()
+@tool
 async def search_movies(query: str, provider: Optional[Literal["tmdb", "jikan"]] = None) -> list[dict]:
     """Search for movies matching ``query``. ``provider`` overrides the default —
     ``"jikan"`` for anime films (MyAnimeList, no key), ``"tmdb"`` otherwise."""
@@ -641,7 +675,7 @@ async def search_movies(query: str, provider: Optional[Literal["tmdb", "jikan"]]
     return [r.model_dump() for r in results]
 
 
-@mcp.tool()
+@tool
 async def add_movie(
     provider_id: str,
     monitored: bool = True,
@@ -659,7 +693,7 @@ async def add_movie(
     )
 
 
-@mcp.tool()
+@tool
 def list_movies(limit: Optional[int] = None, full: bool = False) -> list[dict]:
     """List movies in the library. Compact rows by default; ``full=true`` for all
     fields, ``limit`` to cap."""
@@ -667,14 +701,14 @@ def list_movies(limit: Optional[int] = None, full: bool = False) -> list[dict]:
     return rows[: limit or None] if full else _compact(rows, _MOVIE_COMPACT, limit)
 
 
-@mcp.tool()
+@tool
 def get_movie(movie_id: int) -> dict:
     """Get one movie from the library."""
     movie = app().db.get_movie(movie_id)
     return movie or {"error": f"No movie with id {movie_id}"}
 
 
-@mcp.tool()
+@tool
 def set_movie_monitored(movie_id: int, monitored: bool) -> dict:
     """Monitor/unmonitor a movie for auto-grab."""
     if not app().db.get_movie(movie_id):
@@ -683,7 +717,7 @@ def set_movie_monitored(movie_id: int, monitored: bool) -> dict:
     return app().db.get_movie(movie_id)
 
 
-@mcp.tool()
+@tool
 def remove_movie(movie_id: int) -> dict:
     """Remove a movie from the library."""
     movie = app().db.get_movie(movie_id)
@@ -693,7 +727,7 @@ def remove_movie(movie_id: int) -> dict:
     return {"removed": movie_id, "title": movie["title"]}
 
 
-@mcp.tool()
+@tool
 async def search_movie_releases(movie_id: int, apply_quality: bool = True) -> dict:
     """Search Prowlarr for releases of a library movie (by title + year). Returns
     an envelope: {query, count, releases}."""
@@ -707,7 +741,7 @@ async def search_movie_releases(movie_id: int, apply_quality: bool = True) -> di
     return {"query": query, "count": len(releases), "releases": releases}
 
 
-@mcp.tool()
+@tool
 async def grab_movie(movie_id: int, client_name: Optional[str] = None) -> dict:
     """Auto-pick the best available release for a library movie and grab it."""
     movie = app().db.get_movie(movie_id)
@@ -730,7 +764,7 @@ async def grab_movie(movie_id: int, client_name: Optional[str] = None) -> dict:
 # --------------------------------------------------------------------------- #
 # Release search & grabbing
 # --------------------------------------------------------------------------- #
-@mcp.tool()
+@tool
 async def search_releases(
     query: str,
     media_type: Literal["tv", "movie"] = "tv",
@@ -747,7 +781,7 @@ async def search_releases(
     return {"query": query, "count": len(releases), "releases": releases}
 
 
-@mcp.tool()
+@tool
 async def search_episode_releases(
     series_id: int, season: int, episode: int, apply_quality: bool = True
 ) -> dict:
@@ -780,7 +814,7 @@ async def search_episode_releases(
     }
 
 
-@mcp.tool()
+@tool
 async def grab_release(
     grab_url: str,
     title: str = "manual grab",
@@ -809,7 +843,7 @@ async def grab_release(
     )
 
 
-@mcp.tool()
+@tool
 async def grab_season(series_id: int, season: int, client_name: Optional[str] = None) -> dict:
     """Find and grab the best season/batch pack for a series and link it, so every
     episode is split into place on import and marked grabbed. For anime (single
@@ -817,7 +851,7 @@ async def grab_season(series_id: int, season: int, client_name: Optional[str] = 
     return await app().grab_season(series_id, season, client_name=client_name)
 
 
-@mcp.tool()
+@tool
 async def grab_episode(
     series_id: int, season: int, episode: int, client_name: Optional[str] = None
 ) -> dict:
@@ -845,7 +879,7 @@ async def grab_episode(
 # --------------------------------------------------------------------------- #
 # Download tracking
 # --------------------------------------------------------------------------- #
-@mcp.tool()
+@tool
 def list_downloads(
     status: Optional[
         Literal["grabbed", "downloading", "completed", "imported", "failed", "removed"]
@@ -855,7 +889,7 @@ def list_downloads(
     return app().db.list_downloads(status=status)
 
 
-@mcp.tool()
+@tool
 async def get_download(download_id: int) -> dict:
     """Get one recorded grab plus live status from its download client."""
     import asyncio
@@ -869,14 +903,14 @@ async def get_download(download_id: int) -> dict:
     return {"download": d, "live": st.model_dump() if st else None}
 
 
-@mcp.tool()
+@tool
 async def refresh_downloads() -> list[dict]:
     """Poll all active grabs, import completed ones into the library
     (hardlink/copy/move) and trigger a Plex scan. Returns what changed."""
     return await app().refresh_downloads()
 
 
-@mcp.tool()
+@tool
 async def import_download(download_id: int, notify: bool = True) -> dict:
     """Manually (re)run the import for a completed download — useful after fixing
     a path mapping or root folder. Hardlinks/copies/moves its files into the
@@ -903,7 +937,7 @@ async def import_download(download_id: int, notify: bool = True) -> dict:
     return result
 
 
-@mcp.tool()
+@tool
 async def remove_download(download_id: int, delete_files: bool = False) -> dict:
     """Remove a grab from the download client and mark it removed."""
     import asyncio
@@ -922,7 +956,7 @@ async def remove_download(download_id: int, delete_files: bool = False) -> dict:
 # --------------------------------------------------------------------------- #
 # Plex
 # --------------------------------------------------------------------------- #
-@mcp.tool()
+@tool
 async def plex_login_start(product: str = "LLMarr") -> dict:
     """Begin browser-based Plex sign-in (no manual token needed). Returns a short
     code to enter at https://plex.tv/link; then call ``plex_login_poll`` to finish.
@@ -945,7 +979,7 @@ async def plex_login_start(product: str = "LLMarr") -> dict:
     }
 
 
-@mcp.tool()
+@tool
 async def plex_login_poll(
     url: Optional[str] = None, max_wait_seconds: int = 30
 ) -> dict:
@@ -979,7 +1013,7 @@ async def plex_login_poll(
     return {"authorized": False, "message": "Not approved yet — enter the code, then poll again."}
 
 
-@mcp.tool()
+@tool
 async def import_plex_library(
     dry_run: bool = True,
     monitored: bool = False,
@@ -999,7 +1033,7 @@ async def import_plex_library(
     )
 
 
-@mcp.tool()
+@tool
 async def plex_discover_libraries() -> list[dict]:
     """List Plex library sections with their on-disk paths — use this to pick the
     section names for configure_plex and the paths for configure_root_folder."""
@@ -1008,7 +1042,7 @@ async def plex_discover_libraries() -> list[dict]:
     return await asyncio.to_thread(app().plex().libraries)
 
 
-@mcp.tool()
+@tool
 async def plex_scan(section: Optional[str] = None, path: Optional[str] = None) -> dict:
     """Trigger a Plex library scan. ``path`` (in Plex's own namespace) narrows
     the scan to one directory."""
@@ -1020,13 +1054,13 @@ async def plex_scan(section: Optional[str] = None, path: Optional[str] = None) -
 # --------------------------------------------------------------------------- #
 # RSS / auto-grab
 # --------------------------------------------------------------------------- #
-@mcp.tool()
+@tool
 def rss_status() -> dict:
     """Show the background auto-grab poller's status and last run result."""
     return state.poller.status()
 
 
-@mcp.tool()
+@tool
 async def rss_poll_now() -> dict:
     """Run the RSS/auto-grab poll immediately (search monitored series for
     missing episodes and grab/collect candidates), plus refresh downloads."""
