@@ -353,6 +353,16 @@ class Database:
             (guid, time.time()),
         )
 
+    def forget_guid(self, guid: str) -> bool:
+        """Drop one guid from grab history so it can be re-grabbed. Returns True
+        if a row was removed."""
+        return self.execute("DELETE FROM grab_history WHERE guid=?", (guid,)).rowcount > 0
+
+    def clear_grab_history(self) -> int:
+        """Wipe the whole grab history. Returns how many guids were removed."""
+        cur = self.execute("DELETE FROM grab_history")
+        return cur.rowcount
+
     # -- oauth clients ------------------------------------------------------ #
     def add_oauth_client(self, client_id: str, client_name: str, redirect_uris: str) -> None:
         self.execute(

@@ -991,6 +991,54 @@ async def remove_download(download_id: int, delete_files: bool = False) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# Recovery — unstick wedged state
+# --------------------------------------------------------------------------- #
+@tool
+def reset_episode(episode_id: int) -> dict:
+    """Force an episode back to 'missing' so the RSS poller re-grabs it. Use this
+    to unstick an episode wedged in 'grabbed' (e.g. after a download you gave up
+    on) or to re-download a 'downloaded' one."""
+    return app().reset_episode(episode_id)
+
+
+@tool
+def reset_movie(movie_id: int) -> dict:
+    """Force a movie back to 'missing' so the RSS poller re-grabs it."""
+    return app().reset_movie(movie_id)
+
+
+@tool
+def mark_download_failed(download_id: int) -> dict:
+    """Mark a download failed and free the episodes/movie it covered (only those
+    still 'grabbed') back to 'missing', so RSS can try a different release."""
+    return app().mark_download_failed(download_id)
+
+
+@tool
+def retry_download(download_id: int) -> dict:
+    """Retry a stuck/failed grab: mark it failed and force every linked episode/
+    movie back to 'missing' (regardless of current status) so the RSS poller
+    grabs a fresh release next tick. To also re-allow the same release, pair with
+    forget_release(guid)."""
+    return app().retry_download(download_id)
+
+
+@tool
+def forget_release(guid: str) -> dict:
+    """Remove one release guid from grab history so it can be grabbed again (a bad
+    release is otherwise never re-tried). Find the guid via search results."""
+    removed = app().db.forget_guid(guid)
+    return {"guid": guid, "forgotten": removed}
+
+
+@tool
+def clear_grab_history() -> dict:
+    """Wipe the entire grab history (every remembered release guid). After this,
+    previously-grabbed releases become eligible again — use sparingly."""
+    return {"cleared": app().db.clear_grab_history()}
+
+
+# --------------------------------------------------------------------------- #
 # Plex
 # --------------------------------------------------------------------------- #
 @tool

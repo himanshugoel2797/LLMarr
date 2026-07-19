@@ -103,6 +103,11 @@ in sync when adding a config step or provider/client type.
 - Progress/cancel: `download_queue` (live %, speed, ETA, seeds for in-flight
   grabs), `get_download` (one), `remove_download(delete_files=)` cancels.
   `TorrentStatus` carries dl_speed/eta/num_seeds/size/ratio.
+- Recovery (G2): `reset_episode`/`reset_movie` force an item back to 'missing';
+  `mark_download_failed` fails a download and conservatively frees its
+  still-'grabbed' items; `retry_download` force-resets all linked items
+  regardless of status; `forget_release(guid)`/`clear_grab_history` drop grab
+  history so a guid can be re-tried. App methods of the same names hold the logic.
 
 ## Gotchas
 

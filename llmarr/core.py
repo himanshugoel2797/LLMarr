@@ -327,6 +327,59 @@ class App:
                 reset.append(("episode", eid))
         return reset
 
+    # -- recovery (G2) ------------------------------------------------------ #
+    def reset_episode(self, episode_id: int) -> dict:
+        """Force an episode back to 'missing' so the RSS poller re-grabs it —
+        for unsticking one that is wedged in 'grabbed'/'downloaded'."""
+        ep = self.db.get_episode(episode_id)
+        if not ep:
+            return {"error": f"No episode with id {episode_id}"}
+        self.db.set_episode_status(episode_id, "missing")
+        return {"episode_id": episode_id, "status": "missing", "was": ep["status"]}
+
+    def reset_movie(self, movie_id: int) -> dict:
+        """Force a movie back to 'missing' so the RSS poller re-grabs it."""
+        movie = self.db.get_movie(movie_id)
+        if not movie:
+            return {"error": f"No movie with id {movie_id}"}
+        self.db.set_movie_status(movie_id, "missing")
+        return {"movie_id": movie_id, "status": "missing", "was": movie["movie_status"]}
+
+    def mark_download_failed(self, download_id: int) -> dict:
+        """Mark a download failed and free the episodes/movie it covered (only
+        those still 'grabbed') back to 'missing' so RSS can try another release."""
+        d = self.db.get_download(download_id)
+        if not d:
+            return {"error": f"No download with id {download_id}"}
+        self.db.set_download_status(download_id, "failed")
+        reset = self.reset_grab_to_missing(d)
+        return {"download_id": download_id, "status": "failed", "reset_to_missing": len(reset)}
+
+    def retry_download(self, download_id: int) -> dict:
+        """Retry a stuck/failed grab: mark it failed and force every linked
+        episode/movie back to 'missing' (regardless of current status) so the RSS
+        poller grabs a fresh release for it on the next tick."""
+        d = self.db.get_download(download_id)
+        if not d:
+            return {"error": f"No download with id {download_id}"}
+        self.db.set_download_status(download_id, "failed")
+        reset = 0
+        if d.get("movie_id"):
+            self.db.set_movie_status(d["movie_id"], "missing")
+            reset += 1
+        eids: set[int] = set()
+        if d.get("series_id"):
+            series = self.db.get_series(d["series_id"])
+            if series:
+                eids.update(self._covered_episode_ids(series, d.get("title") or ""))
+        if d.get("episode_id"):
+            eids.add(d["episode_id"])
+        for eid in eids:
+            if self.db.get_episode(eid):
+                self.db.set_episode_status(eid, "missing")
+                reset += 1
+        return {"download_id": download_id, "status": "failed", "reset_to_missing": reset}
+
     # -- grabbing ----------------------------------------------------------- #
     async def grab(
         self,

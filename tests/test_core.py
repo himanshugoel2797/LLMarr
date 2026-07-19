@@ -184,6 +184,56 @@ def test_reset_grab_to_missing(app):
     assert app.db.get_episode(e2)["status"] == "downloaded"
 
 
+# --------------------------------------------------------------------------- #
+# recovery tools (G2)
+# --------------------------------------------------------------------------- #
+def test_reset_episode_and_movie(app):
+    sid = app.db.upsert_series(provider="tmdb", provider_id="1", title="Show")
+    e = app.db.upsert_episode(sid, 1, 1)
+    app.db.set_episode_status(e, "downloaded", "/x.mkv")
+    res = app.reset_episode(e)
+    assert res["was"] == "downloaded" and app.db.get_episode(e)["status"] == "missing"
+    mid = app.db.upsert_movie(provider="tmdb", provider_id="9", title="Nebula")
+    app.db.set_movie_status(mid, "grabbed")
+    assert app.reset_movie(mid)["status"] == "missing"
+    assert app.db.get_movie(mid)["movie_status"] == "missing"
+    assert "error" in app.reset_episode(999)
+
+
+def test_mark_download_failed_only_resets_grabbed(app):
+    sid = app.db.upsert_series(provider="tmdb", provider_id="1", title="Show")
+    e = app.db.upsert_episode(sid, 1, 1)
+    app.db.set_episode_status(e, "downloaded")  # already imported — must stay
+    did = app.db.add_download(series_id=sid, episode_id=e, title="Show.S01E01",
+                              torrent_hash="h", client="qbit")
+    res = app.mark_download_failed(did)
+    assert res["status"] == "failed" and res["reset_to_missing"] == 0
+    assert app.db.get_download(did)["status"] == "failed"
+    assert app.db.get_episode(e)["status"] == "downloaded"  # untouched
+
+
+def test_retry_download_force_resets(app):
+    sid = app.db.upsert_series(provider="tmdb", provider_id="1", title="Show")
+    e = app.db.upsert_episode(sid, 1, 1)
+    app.db.set_episode_status(e, "downloaded")  # force-reset even downloaded
+    did = app.db.add_download(series_id=sid, episode_id=e, title="Show.S01E01",
+                              torrent_hash="h", client="qbit")
+    res = app.retry_download(did)
+    assert res["reset_to_missing"] == 1
+    assert app.db.get_episode(e)["status"] == "missing"
+    assert app.db.get_download(did)["status"] == "failed"
+
+
+def test_forget_and_clear_grab_history(app):
+    app.db.record_guid("g1")
+    app.db.record_guid("g2")
+    assert app.db.forget_guid("g1") is True
+    assert not app.db.seen_guid("g1") and app.db.seen_guid("g2")
+    assert app.db.forget_guid("missing") is False
+    assert app.db.clear_grab_history() == 1  # only g2 left
+    assert not app.db.seen_guid("g2")
+
+
 async def test_rss_picks_second_best_when_top_seen(configured, fakes, monkeypatch):
     app = configured
     monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
