@@ -72,6 +72,28 @@ def test_verify_access_token(provider):
     assert provider.verify_access_token(forged) is None
 
 
+def test_rotating_signing_key_invalidates_tokens(provider):
+    now = int(time.time())
+    token = jwt.encode({"typ": "access", "exp": now + 60}, provider.signing_key(),
+                       algorithm="HS256")
+    assert provider.verify_access_token(token)  # valid before rotation
+    # Rotate the signing key (what rotate_oauth_keys does).
+    import secrets
+    provider.store.mutate(
+        lambda c: setattr(c.server, "oauth_signing_key", secrets.token_urlsafe(48))
+    )
+    assert provider.verify_access_token(token) is None  # now rejected
+
+
+def test_clear_oauth_clients(provider):
+    provider.db.add_oauth_client("cid", "Claude", '["https://x/cb"]')
+    assert provider.db.count_oauth_clients() == 1
+    assert provider.db.get_oauth_client("cid") is not None
+    assert provider.db.clear_oauth_clients() == 1
+    assert provider.db.count_oauth_clients() == 0
+    assert provider.db.get_oauth_client("cid") is None
+
+
 # --------------------------------------------------------------------------- #
 # Discovery + DCR
 # --------------------------------------------------------------------------- #

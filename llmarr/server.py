@@ -545,6 +545,29 @@ def auth_token(
     return {"auth_token": new, "action": action}
 
 
+@tool
+def rotate_oauth_keys(clear_clients: bool = True) -> dict:
+    """Rotate the OAuth signing key, invalidating EVERY issued OAuth access and
+    refresh token (all claude.ai / mobile connector sessions must re-authorize).
+    This is the OAuth counterpart to auth_token('rotate') — the static bearer
+    token is unaffected. ``clear_clients=true`` (default) also forgets every
+    dynamically-registered OAuth client, so they must re-register (DCR) to
+    reconnect. A deliberate lockout action; takes effect immediately for token
+    verification and on the next HTTP server restart for the persisted key."""
+    import secrets
+
+    new_key = secrets.token_urlsafe(48)
+    app().store.mutate(lambda c: setattr(c.server, "oauth_signing_key", new_key))
+    cleared = app().db.clear_oauth_clients() if clear_clients else 0
+    return {
+        "rotated": True,
+        "oauth_signing_key": "***set***",
+        "clients_cleared": cleared,
+        "note": "All OAuth tokens are now invalid; connectors must re-authorize"
+        + (" and re-register." if clear_clients else "."),
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Connection tests
 # --------------------------------------------------------------------------- #

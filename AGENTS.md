@@ -74,6 +74,10 @@ in sync when adding a config step or provider/client type.
   credential, token endpoint, JWT access/refresh) — no external IdP. Tokens are
   HS256 JWTs signed with `server.oauth_signing_key`; only the single-use auth-code
   jti set is in-memory. `public_url` (or request-derived) builds endpoint URLs.
+  `rotate_oauth_keys(clear_clients=True)` (G9) regenerates the signing key —
+  invalidating every issued OAuth access/refresh token — and optionally wipes the
+  registered `oauth_clients` (DB `clear_oauth_clients`); the static bearer token is
+  unaffected (rotate that with `auth_token("rotate")`).
 - **Quality selection is a heuristic**, not custom formats: hard filters
   (ignored/required terms, seeders, size) then rank by resolution/preferred
   terms/seeders. Keep it predictable.

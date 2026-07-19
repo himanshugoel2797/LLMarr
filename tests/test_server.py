@@ -133,6 +133,19 @@ def test_set_episode_monitored(wired):
     assert "error" in server.set_episode_monitored(999, True)
 
 
+def test_rotate_oauth_keys(wired):
+    wired.store.mutate(lambda c: setattr(c.server, "oauth_signing_key", "old"))
+    wired.db.add_oauth_client("cid", "Claude", '["https://x/cb"]')
+    out = server.rotate_oauth_keys()
+    assert out["rotated"] is True and out["clients_cleared"] == 1
+    assert wired.config.server.oauth_signing_key != "old"
+    assert wired.db.count_oauth_clients() == 0
+    # keep_clients variant
+    wired.db.add_oauth_client("cid2", "Claude", '["https://x/cb"]')
+    out2 = server.rotate_oauth_keys(clear_clients=False)
+    assert out2["clients_cleared"] == 0 and wired.db.count_oauth_clients() == 1
+
+
 def test_remove_series(wired):
     sid = wired.db.upsert_series(provider="tmdb", provider_id="1", title="Show")
     out = server.remove_series(sid)

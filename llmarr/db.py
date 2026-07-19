@@ -378,3 +378,12 @@ class Database:
 
     def get_oauth_client(self, client_id: str) -> Optional[dict]:
         return self.query_one("SELECT * FROM oauth_clients WHERE client_id=?", (client_id,))
+
+    def count_oauth_clients(self) -> int:
+        row = self.query_one("SELECT COUNT(*) AS n FROM oauth_clients")
+        return row["n"] if row else 0
+
+    def clear_oauth_clients(self) -> int:
+        """Drop every dynamically-registered OAuth client. Returns how many were
+        removed. Existing clients must then re-register (DCR) to reconnect."""
+        return self.execute("DELETE FROM oauth_clients").rowcount
