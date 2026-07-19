@@ -35,6 +35,31 @@ def magnet_hash(url: str) -> Optional[str]:
     return m.group(1).lower() if m else None
 
 
+def _resolve_torrent(url: str):
+    """Resolve an indexer/Prowlarr download URL, host-side, into something the
+    download client can add without reaching that URL itself.
+
+    Returns ("magnet", str) if it redirects to a magnet, ("file", bytes) if the
+    .torrent can be fetched, else ("url", url) as a last resort.
+    """
+    import httpx
+
+    try:
+        with httpx.Client(follow_redirects=False, timeout=30) as client:
+            resp = client.get(url)
+            # Some indexers 30x-redirect a download link to a magnet.
+            if resp.is_redirect:
+                loc = resp.headers.get("location", "")
+                if loc.startswith("magnet:"):
+                    return ("magnet", loc)
+                resp = client.get(loc, follow_redirects=True) if loc else resp
+            if resp.status_code == 200 and resp.content[:1] == b"d":
+                return ("file", resp.content)  # bencoded .torrent
+    except Exception:  # noqa: BLE001 - fall back to handing the URL to the client
+        pass
+    return ("url", url)
+
+
 class QBittorrentClient(DownloadClient):
     def __init__(self, cfg: DownloadClientConfig):
         if not cfg.url:
@@ -65,24 +90,36 @@ class QBittorrentClient(DownloadClient):
         kwargs: dict = {"category": category}
         if save_path:
             kwargs["save_path"] = save_path
-        if url.startswith("magnet:"):
-            kwargs["urls"] = url
-        else:
-            kwargs["urls"] = url  # qBittorrent will fetch .torrent from http(s) URLs
+
+        magnet = url if url.startswith("magnet:") else None
+        if magnet is None:
+            # The download client is often containerised (e.g. behind a VPN) and
+            # can't reach the indexer/Prowlarr URL that LLMarr can. So resolve the
+            # link ourselves: follow a redirect to a magnet, or fetch the .torrent
+            # bytes and hand the FILE to qBittorrent instead of the URL.
+            kind, payload = _resolve_torrent(url)
+            if kind == "magnet":
+                magnet = payload
+            elif kind == "file":
+                kwargs["torrent_files"] = payload
+            else:
+                kwargs["urls"] = payload  # last resort: let the client fetch it
+        if magnet is not None:
+            kwargs["urls"] = magnet
+
         result = self._client.torrents_add(**kwargs)
         if result != "Ok.":
             raise RuntimeError(f"qBittorrent rejected the torrent: {result!r}")
 
         # Prefer the deterministic magnet hash.
-        h = magnet_hash(url)
+        h = magnet_hash(magnet or "")
         if h and self.status(h):
             return h
 
         # Otherwise poll for the newly-appeared torrent.
-        for _ in range(10):
+        for _ in range(20):
             time.sleep(0.5)
-            after = self._client.torrents_info()
-            new = [t for t in after if t.hash not in before]
+            new = [t for t in self._client.torrents_info() if t.hash not in before]
             if new:
                 return new[0].hash
         return h
@@ -100,6 +137,8 @@ class QBittorrentClient(DownloadClient):
         )
 
     def status(self, torrent_hash: str) -> Optional[TorrentStatus]:
+        if not torrent_hash:
+            return None
         self._login()
         infos = self._client.torrents_info(torrent_hashes=torrent_hash)
         for t in infos:
