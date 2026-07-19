@@ -35,8 +35,13 @@ def _is_prefix(prefix: str, path: str) -> bool:
 def translate(
     config: Config, path: str, from_context: str, to_context: str
 ) -> Optional[str]:
-    """Return ``path`` as seen from ``to_context``, or ``None`` if no mapping
-    applies. If the two contexts are identical the path is returned unchanged."""
+    """Return ``path`` as seen from ``to_context``.
+
+    If the two contexts are identical the path is returned unchanged. When no
+    mapping applies the result depends on ``config.single_host``: in single-host
+    mode (the default, non-containerised case) the path passes through unchanged;
+    otherwise ``None`` is returned so the caller can surface a missing-mapping
+    error for the split-container deployment."""
     if from_context == to_context:
         return _normalize(path)
 
@@ -59,7 +64,8 @@ def translate(
                 best = (length, _normalize(src), _normalize(dst))
 
     if best is None:
-        return None
+        # No mapping connects these contexts for this path.
+        return path if getattr(config, "single_host", False) else None
     _, src, dst = best
     remainder = path[len(src):].lstrip("/")
     return posixpath.join(dst, remainder) if remainder else dst

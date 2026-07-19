@@ -18,6 +18,7 @@ def library(app, tmp_path):
     def setup(c):
         c.importer.min_video_mb = 0
         c.importer.work_context = "local"
+        c.single_host = False  # container-style: explicit mappings, strict
         c.path_mappings = [
             PathMapping(group="dl", context="qbittorrent", path="/downloads"),
             PathMapping(group="dl", context="local", path=str(dl)),
@@ -159,6 +160,33 @@ def test_no_content_path_errors(library):
     d = {"id": 1, "series_id": None, "episode_id": None, "movie_id": None}
     res = app.importer.import_download(d, None)
     assert res.errors and not res.imported
+
+
+def test_single_host_no_mappings_needed(app, tmp_path):
+    """The non-container case: no path mappings, paths are identical everywhere."""
+    lib = tmp_path / "lib"
+    lib.mkdir()
+
+    def setup(c):
+        c.importer.min_video_mb = 0
+        assert c.single_host is True  # default
+        c.root_folders = [RootFolder(name="tv", media_type="tv", context="local", path=str(lib))]
+
+    app.store.mutate(setup)
+    sid = app.db.upsert_series(
+        provider="tmdb", provider_id="1", title="Show", year=2020,
+        root_folder="tv", folder_name="Show (2020)",
+    )
+    e = app.db.upsert_episode(sid, 1, 1, title="Pilot")
+    # In single-host mode the download path is a real local path already.
+    src = write(tmp_path / "downloads" / "Show.S01E01.1080p.mkv")
+    d = {"id": 1, "series_id": sid, "episode_id": e, "movie_id": None}
+
+    res = app.importer.import_download(d, str(src))
+    assert res.ok, res
+    dest = Path(res.imported[0].destination)
+    assert dest.name == "Show - S01E01 - Pilot.mkv"
+    assert dest.stat().st_ino == src.stat().st_ino  # hardlink
 
 
 def test_missing_video_files_skipped(library):

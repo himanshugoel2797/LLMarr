@@ -2,6 +2,16 @@
 # ~/.config/llmarr/config.yaml) or just configure everything through the MCP
 # tools — this file is written/updated by the server itself.
 
+# single_host = true (default): LLMarr, qBittorrent and Plex share the same
+# paths, so path_mappings can be left empty. Set false only for split containers.
+single_host: true
+
+server:
+  # HTTP transport auth. A single static bearer token = a persistent login,
+  # auto-generated on first HTTP start if left null. stdio needs no token.
+  auth_token: null
+  require_auth: true
+
 metadata:
   provider: tmdb
   tmdb_api_key: null        # get a free v3 key from themoviedb.org
@@ -28,11 +38,13 @@ plex:
   tv_section: TV Shows
   movie_section: Movies
 
-# Same physical dir, seen by each container. Entries in a group are equivalent.
-path_mappings:
-  - {group: dl, context: qbittorrent, path: /downloads}
-  - {group: dl, context: plex,        path: /data/torrents}
-  - {group: dl, context: local,       path: /mnt/media/dl}
+# Leave empty when single_host is true. For split containers set single_host
+# false and describe the same physical dir as each container sees it; entries in
+# a group are equivalent.
+path_mappings: []
+#  - {group: dl, context: qbittorrent, path: /downloads}
+#  - {group: dl, context: plex,        path: /data/torrents}
+#  - {group: dl, context: local,       path: /mnt/media/dl}
 
 root_folders:
   - {name: tv-main, media_type: tv, context: local, path: /mnt/media/tv}

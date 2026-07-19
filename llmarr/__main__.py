@@ -1,29 +1,70 @@
 """Entry point: ``python -m llmarr`` / ``llmarr``.
 
-Runs the MCP server over stdio by default (the transport MCP clients expect).
-Set ``LLMARR_TRANSPORT=streamable-http`` (with ``LLMARR_HOST``/``LLMARR_PORT``)
-to expose it over HTTP instead — useful when the server runs in its own
-container and a remote MCP client connects to it.
+Runs the MCP server over stdio by default (what most MCP clients spawn locally —
+no auth needed). Set ``LLMARR_TRANSPORT=streamable-http`` to run it as a
+persistent HTTP service in its own process; that transport is protected by a
+single static bearer token (a persistent login) unless auth is disabled.
 """
 
 from __future__ import annotations
 
 import os
+import sys
+
+
+def _run_http() -> None:
+    from .auth import BearerAuthMiddleware, ensure_token
+    from .config import ConfigStore
+    from .server import mcp
+
+    if os.environ.get("LLMARR_HOST"):
+        mcp.settings.host = os.environ["LLMARR_HOST"]
+    if os.environ.get("LLMARR_PORT"):
+        mcp.settings.port = int(os.environ["LLMARR_PORT"])
+
+    store = ConfigStore()
+    app = mcp.streamable_http_app()
+
+    host, port = mcp.settings.host, mcp.settings.port
+    if store.config.server.require_auth:
+        token = ensure_token(store)
+        app.add_middleware(BearerAuthMiddleware, token=token)
+        print(
+            "\n".join(
+                [
+                    "",
+                    "=" * 68,
+                    " LLMarr HTTP transport — authentication is ON",
+                    f"   URL:   http://{host}:{port}{mcp.settings.streamable_http_path}",
+                    f"   Token: {token}",
+                    "   Send it on every request:  Authorization: Bearer <token>",
+                    "   (rotate with the rotate_auth_token tool)",
+                    "=" * 68,
+                    "",
+                ]
+            ),
+            file=sys.stderr,
+        )
+    else:
+        print(
+            "WARNING: LLMarr HTTP transport is running WITHOUT authentication "
+            "(server.require_auth is false).",
+            file=sys.stderr,
+        )
+
+    import uvicorn
+
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 def main() -> None:
-    from .server import mcp
-
     transport = os.environ.get("LLMARR_TRANSPORT", "stdio")
     if transport == "stdio":
+        from .server import mcp
+
         mcp.run()
     else:
-        # FastMCP reads host/port from its settings; pass through env if given.
-        if os.environ.get("LLMARR_HOST"):
-            mcp.settings.host = os.environ["LLMARR_HOST"]
-        if os.environ.get("LLMARR_PORT"):
-            mcp.settings.port = int(os.environ["LLMARR_PORT"])
-        mcp.run(transport=transport)
+        _run_http()
 
 
 if __name__ == "__main__":

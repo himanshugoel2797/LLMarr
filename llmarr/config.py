@@ -137,7 +137,27 @@ class ImportConfig(BaseModel):
     )
 
 
+class ServerConfig(BaseModel):
+    """MCP server transport + authentication.
+
+    stdio (the default) needs no auth — the MCP client spawns the process and the
+    channel is inherently local/trusted. For the HTTP transport, a single static
+    bearer token acts as a persistent login: it is generated once on first HTTP
+    start, saved here, and reused across restarts. Clients send it as
+    ``Authorization: Bearer <token>``.
+    """
+
+    auth_token: Optional[str] = None
+    require_auth: bool = True
+
+
 class Config(BaseModel):
+    # When true (default, the non-containerised case) LLMarr, qBittorrent and
+    # Plex all see the same filesystem paths, so path translation is a no-op and
+    # no path mappings are needed. Set false for a split-container deployment and
+    # define path_mappings; unmapped paths then raise instead of passing through.
+    single_host: bool = True
+    server: ServerConfig = Field(default_factory=ServerConfig)
     metadata: MetadataConfig = Field(default_factory=MetadataConfig)
     prowlarr: ProwlarrConfig = Field(default_factory=ProwlarrConfig)
     download_clients: dict[str, DownloadClientConfig] = Field(default_factory=dict)
@@ -153,7 +173,7 @@ class Config(BaseModel):
 # --------------------------------------------------------------------------- #
 # Persistence
 # --------------------------------------------------------------------------- #
-_SECRET_KEYS = {"api_key", "tmdb_api_key", "password", "token"}
+_SECRET_KEYS = {"api_key", "tmdb_api_key", "password", "token", "auth_token"}
 
 
 def default_config_path() -> Path:

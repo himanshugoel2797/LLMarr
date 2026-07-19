@@ -14,6 +14,7 @@ from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 
+from .auth import generate_token
 from .config import (
     ConfigStore,
     DownloadClientConfig,
@@ -299,6 +300,58 @@ def configure_rss(
     if app().config.rss.enabled:
         state.poller.start()
     return state.poller.status()
+
+
+# --------------------------------------------------------------------------- #
+# Server / auth / deployment mode
+# --------------------------------------------------------------------------- #
+@mcp.tool()
+def configure_server(
+    single_host: Optional[bool] = None,
+    require_auth: Optional[bool] = None,
+) -> dict:
+    """Set deployment mode. ``single_host=true`` (default) means LLMarr,
+    qBittorrent and Plex share the same filesystem paths, so no path mappings are
+    needed; set it false for a split-container setup and define path mappings.
+    ``require_auth`` toggles bearer-token auth on the HTTP transport (takes effect
+    on restart)."""
+    def _m(c):
+        if single_host is not None:
+            c.single_host = single_host
+        if require_auth is not None:
+            c.server.require_auth = require_auth
+    app().store.mutate(_m)
+    c = app().config
+    return {"single_host": c.single_host, "require_auth": c.server.require_auth}
+
+
+@mcp.tool()
+def get_auth_token() -> dict:
+    """Reveal the current HTTP bearer token (for configuring your MCP client).
+    Returns null if none is set — one is generated automatically on first HTTP
+    start. Only the TV/torrent stack is behind this; stdio needs no token."""
+    token = app().config.server.auth_token
+    return {
+        "auth_token": token,
+        "require_auth": app().config.server.require_auth,
+        "configured": bool(token),
+    }
+
+
+@mcp.tool()
+def set_auth_token(token: Optional[str] = None) -> dict:
+    """Set the HTTP bearer token to a specific value, or generate a fresh one if
+    omitted. Returns the token. Takes effect on the next HTTP server restart."""
+    new = token or generate_token()
+    app().store.mutate(lambda c: setattr(c.server, "auth_token", new))
+    return {"auth_token": new}
+
+
+@mcp.tool()
+def rotate_auth_token() -> dict:
+    """Generate a new random HTTP bearer token, invalidating the old one. Takes
+    effect on the next HTTP server restart."""
+    return set_auth_token(None)
 
 
 # --------------------------------------------------------------------------- #

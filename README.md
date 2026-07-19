@@ -20,13 +20,18 @@ LLM do the fuzzy parts (disambiguating a show, deciding which release looks
 right, reacting to "just grab this link") while LLMarr does the mechanical parts
 (search, grab, track, import).
 
-## Container-aware path mapping
+## Single-host by default, container-aware when you need it
 
-LLMarr, qBittorrent, and Plex may each run in a separate container and see the
-same volume at a different path. LLMarr models this with **path mappings**:
-entries sharing a `group` describe one physical directory as each container sees
-it. When a download completes, the qBittorrent save path is translated into
-Plex's namespace before triggering a targeted scan.
+Most people (including the author) run LLMarr, qBittorrent, and Plex on one host
+where they all see the same paths. That's the default — **`single_host: true`** —
+and it needs **no path mappings**: paths pass through untranslated.
+
+For a split-container deployment, set `single_host: false` (via
+`configure_server(single_host=false)`) and describe how each container sees the
+same volume with **path mappings** — entries sharing a `group` are the same
+physical directory. When a download completes, the qBittorrent save path is
+translated into Plex's namespace before the targeted scan. In this mode an
+unmapped path raises instead of silently passing through.
 
 ```
 add_path_mapping("dl", "qbittorrent", "/downloads")
@@ -48,7 +53,7 @@ Stdio (what most MCP clients expect):
 llmarr
 ```
 
-HTTP (when the server lives in its own container and a remote client connects):
+HTTP (run it once as a persistent service a client logs into):
 
 ```bash
 LLMARR_TRANSPORT=streamable-http LLMARR_HOST=0.0.0.0 LLMARR_PORT=8000 llmarr
@@ -60,6 +65,8 @@ the library/history/RSS state at `$LLMARR_DB`
 
 ### Register with an MCP client
 
+Stdio — the client spawns the process (no auth needed, it's local):
+
 ```json
 {
   "mcpServers": {
@@ -68,14 +75,45 @@ the library/history/RSS state at `$LLMARR_DB`
 }
 ```
 
+HTTP — point the client at the URL with the bearer token (see below):
+
+```json
+{
+  "mcpServers": {
+    "llmarr": {
+      "url": "http://your-host:8000/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}
+```
+
+## Authentication (single persistent login)
+
+stdio needs no auth — the MCP client launches LLMarr directly. The **HTTP
+transport** is protected by one **static bearer token**, deliberately simple for
+a single-user homelab service: a persistent login rather than a per-session OAuth
+dance.
+
+- On first HTTP start, if no token is set, LLMarr **generates one, saves it to
+  config, and prints it** (with the URL) to stderr. The same token is reused on
+  every restart.
+- Clients send `Authorization: Bearer <token>` on every request; anything else
+  gets `401`.
+- Manage it with the `get_auth_token`, `set_auth_token`, and `rotate_auth_token`
+  tools, or set your own value in `config.yaml`. Disable auth entirely (e.g.
+  behind your own reverse proxy) with `configure_server(require_auth=false)`.
+
 ## First-run setup (all via tools)
 
 1. `configure_metadata(tmdb_api_key="…")`
-2. `configure_prowlarr(url="http://prowlarr:9696", api_key="…")`
-3. `configure_download_client("qbit", url="http://qbittorrent:8080", username="…", password="…", save_path="/downloads")`
-4. `configure_plex(url="http://plex:32400", token="…", tv_section="TV Shows")`
-5. `add_path_mapping(...)` for each container namespace (see above)
-6. `test_connections()` to confirm everything is reachable
+2. `configure_prowlarr(url="http://localhost:9696", api_key="…")`
+3. `configure_download_client("qbit", url="http://localhost:8080", username="…", password="…", save_path="/data/downloads")`
+4. `configure_plex(url="http://localhost:32400", token="…", tv_section="TV Shows")`
+5. `configure_root_folder("tv-main", "/data/media/tv")` (and a `movie` one)
+6. Single host? You're done — skip path mappings. Split containers?
+   `configure_server(single_host=false)` then `add_path_mapping(...)` per namespace.
+7. `test_connections()` to confirm everything is reachable
 
 ## Typical flow
 
@@ -124,6 +162,7 @@ scan the Plex movie section.
 | Area | Tools |
 | --- | --- |
 | Config | `get_config`, `configure_metadata`, `configure_prowlarr`, `configure_download_client`, `configure_plex`, `configure_root_folder`, `configure_quality`, `configure_rss`, `configure_import` |
+| Server / auth | `configure_server`, `get_auth_token`, `set_auth_token`, `rotate_auth_token` |
 | Path maps | `add_path_mapping`, `list_path_mappings`, `remove_path_mapping`, `translate_path` |
 | Diagnostics | `test_connections` |
 | Series | `search_series`, `add_series`, `list_series`, `get_series`, `list_episodes`, `set_monitored`, `remove_series` |

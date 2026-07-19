@@ -25,6 +25,8 @@ dependencies = [
     "qbittorrent-api>=2024.1.58",
     "plexapi>=4.15",
     "feedparser>=6.0",
+    "starlette>=0.37",
+    "uvicorn>=0.30",
 ]
 
 [project.optional-dependencies]
