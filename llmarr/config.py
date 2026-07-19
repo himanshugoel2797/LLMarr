@@ -14,7 +14,15 @@ from pathlib import Path
 from typing import Literal, Optional
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel as _PydBase
+from pydantic import ConfigDict, Field
+
+
+class BaseModel(_PydBase):
+    # Validate on attribute assignment too, so an invalid value written through a
+    # config tool (e.g. a bad Literal) is rejected immediately instead of silently
+    # persisting and breaking the next load.
+    model_config = ConfigDict(validate_assignment=True)
 
 
 # --------------------------------------------------------------------------- #

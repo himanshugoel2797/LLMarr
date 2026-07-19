@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Literal, Optional
 
 from mcp.server.fastmcp import FastMCP
 
@@ -114,7 +114,7 @@ def get_config() -> dict:
 @mcp.tool()
 def configure_metadata(
     tmdb_api_key: Optional[str] = None,
-    provider: Optional[str] = None,
+    provider: Optional[Literal["tmdb", "jikan"]] = None,
     language: Optional[str] = None,
     anime_api_url: Optional[str] = None,
 ) -> dict:
@@ -158,15 +158,17 @@ def configure_prowlarr(
 def configure_download_client(
     name: str,
     url: Optional[str] = None,
-    type: str = "qbittorrent",
+    type: Literal["qbittorrent"] = "qbittorrent",
     username: Optional[str] = None,
     password: Optional[str] = None,
     category: Optional[str] = None,
     save_path: Optional[str] = None,
-    make_default: bool = True,
+    make_default: bool = False,
 ) -> dict:
     """Add or update a download client. ``save_path`` is the download directory
-    as the *client* sees it; use path mappings to translate for Plex."""
+    as the *client* sees it; use path mappings to translate for Plex. The first
+    client added becomes the default automatically; pass ``make_default=true`` to
+    force an existing setup to switch."""
     def _m(c):
         existing = c.download_clients.get(name)
         cfg = existing or DownloadClientConfig(type=type)
@@ -260,14 +262,30 @@ def translate_path(path: str, from_context: str, to_context: str) -> dict:
 
 @mcp.tool()
 def configure_root_folder(
-    name: str, path: str, media_type: str = "tv", context: str = "local"
+    name: str, path: str, media_type: Literal["tv", "movie"] = "tv", context: str = "local"
 ) -> list[dict]:
-    """Register a library root folder (where a media type lives, per context)."""
+    """Add or replace a library root folder (where a media type lives, per
+    context). Returns all root folders."""
     def _m(c):
         c.root_folders = [r for r in c.root_folders if r.name != name]
         c.root_folders.append(
             RootFolder(name=name, path=path, media_type=media_type, context=context)
         )
+    app().store.mutate(_m)
+    return [r.model_dump() for r in app().config.root_folders]
+
+
+@mcp.tool()
+def list_root_folders() -> list[dict]:
+    """List configured library root folders."""
+    return [r.model_dump() for r in app().config.root_folders]
+
+
+@mcp.tool()
+def remove_root_folder(name: str) -> list[dict]:
+    """Remove a library root folder by name. Returns the remaining folders."""
+    def _m(c):
+        c.root_folders = [r for r in c.root_folders if r.name != name]
     app().store.mutate(_m)
     return [r.model_dump() for r in app().config.root_folders]
 
@@ -306,7 +324,7 @@ def configure_quality(
 @mcp.tool()
 def configure_import(
     enabled: Optional[bool] = None,
-    mode: Optional[str] = None,
+    mode: Optional[Literal["hardlink", "copy", "move"]] = None,
     rename: Optional[bool] = None,
     work_context: Optional[str] = None,
     min_video_mb: Optional[int] = None,
@@ -358,7 +376,7 @@ def configure_rss(
 def configure_server(
     single_host: Optional[bool] = None,
     require_auth: Optional[bool] = None,
-    auth_mode: Optional[str] = None,
+    auth_mode: Optional[Literal["token", "oauth", "none"]] = None,
     public_url: Optional[str] = None,
     allowed_hosts: Optional[list[str]] = None,
     allowed_origins: Optional[list[str]] = None,
@@ -494,7 +512,7 @@ async def test_connections() -> dict:
 # Metadata / library
 # --------------------------------------------------------------------------- #
 @mcp.tool()
-async def search_series(query: str, provider: Optional[str] = None) -> list[dict]:
+async def search_series(query: str, provider: Optional[Literal["tmdb", "jikan"]] = None) -> list[dict]:
     """Search for TV series matching ``query``. ``provider`` overrides the default
     metadata source — use ``"jikan"`` for anime (MyAnimeList, no key) or
     ``"tmdb"`` for general TV. Each result carries its own ``provider``/
@@ -507,30 +525,41 @@ async def search_series(query: str, provider: Optional[str] = None) -> list[dict
 async def add_series(
     provider_id: str,
     monitored: bool = True,
-    quality_profile: Optional[str] = None,
     root_folder: Optional[str] = None,
     seasons: Optional[list[int]] = None,
-    provider: Optional[str] = None,
+    provider: Optional[Literal["tmdb", "jikan"]] = None,
 ) -> dict:
     """Add a series to the library by its metadata provider id, fetching its full
     episode list. Pass the same ``provider`` used to find it (e.g. ``"jikan"`` for
     an anime from MyAnimeList). ``seasons`` optionally limits which seasons are
-    monitored for auto-grab (default: all). Note: anime is modelled as season 1
-    with absolute episode numbers."""
+    monitored for auto-grab (default: all). Re-adding an existing series refreshes
+    metadata without resetting your monitored choices. Note: anime is modelled as
+    season 1 with absolute episode numbers."""
     return await app().add_series(
         provider_id,
         monitored=monitored,
-        quality_profile=quality_profile,
         root_folder=root_folder,
         seasons=seasons,
         provider=provider,
     )
 
 
+_SERIES_COMPACT = ("id", "title", "year", "monitored", "status", "absolute_numbering", "provider")
+_MOVIE_COMPACT = ("id", "title", "year", "monitored", "movie_status", "provider")
+
+
+def _compact(rows: list[dict], keys, limit: Optional[int]) -> list[dict]:
+    out = [{k: r.get(k) for k in keys} for r in rows]
+    return out[:limit] if limit else out
+
+
 @mcp.tool()
-def list_series() -> list[dict]:
-    """List all series in the library."""
-    return app().db.list_series()
+def list_series(limit: Optional[int] = None, full: bool = False) -> list[dict]:
+    """List series in the library. Compact rows by default (id/title/year/
+    monitored/status); pass ``full=true`` for all fields or ``limit`` to cap.
+    Use get_series for one series' episode summary."""
+    rows = app().db.list_series()
+    return rows[: limit or None] if full else _compact(rows, _SERIES_COMPACT, limit)
 
 
 @mcp.tool()
@@ -552,13 +581,17 @@ def get_series(series_id: int, include_episodes: bool = False) -> dict:
 
 @mcp.tool()
 def list_episodes(
-    series_id: int, status: Optional[str] = None, monitored_only: bool = False
+    series_id: int,
+    status: Optional[Literal["missing", "grabbed", "downloaded"]] = None,
+    monitored_only: bool = False,
+    limit: Optional[int] = None,
 ) -> list[dict]:
-    """List episodes of a series, optionally filtered by status
-    (missing|grabbed|downloaded) and monitored flag."""
-    return app().db.list_episodes(
+    """List episodes of a series, optionally filtered by status and monitored
+    flag, capped by ``limit``."""
+    rows = app().db.list_episodes(
         series_id, status=status, monitored=True if monitored_only else None
     )
+    return rows[:limit] if limit else rows
 
 
 @mcp.tool()
@@ -582,7 +615,7 @@ def remove_series(series_id: int) -> dict:
 # Movies
 # --------------------------------------------------------------------------- #
 @mcp.tool()
-async def search_movies(query: str, provider: Optional[str] = None) -> list[dict]:
+async def search_movies(query: str, provider: Optional[Literal["tmdb", "jikan"]] = None) -> list[dict]:
     """Search for movies matching ``query``. ``provider`` overrides the default —
     ``"jikan"`` for anime films (MyAnimeList, no key), ``"tmdb"`` otherwise."""
     results = await app().provider(provider).search_movies(query)
@@ -593,9 +626,8 @@ async def search_movies(query: str, provider: Optional[str] = None) -> list[dict
 async def add_movie(
     provider_id: str,
     monitored: bool = True,
-    quality_profile: Optional[str] = None,
     root_folder: Optional[str] = None,
-    provider: Optional[str] = None,
+    provider: Optional[Literal["tmdb", "jikan"]] = None,
 ) -> dict:
     """Add a movie to the library by its metadata provider id. Pass the same
     ``provider`` used to find it. A monitored movie is auto-grabbed by the RSS
@@ -603,16 +635,17 @@ async def add_movie(
     return await app().add_movie(
         provider_id,
         monitored=monitored,
-        quality_profile=quality_profile,
         root_folder=root_folder,
         provider=provider,
     )
 
 
 @mcp.tool()
-def list_movies() -> list[dict]:
-    """List all movies in the library."""
-    return app().db.list_movies()
+def list_movies(limit: Optional[int] = None, full: bool = False) -> list[dict]:
+    """List movies in the library. Compact rows by default; ``full=true`` for all
+    fields, ``limit`` to cap."""
+    rows = app().db.list_movies()
+    return rows[: limit or None] if full else _compact(rows, _MOVIE_COMPACT, limit)
 
 
 @mcp.tool()
@@ -642,15 +675,17 @@ def remove_movie(movie_id: int) -> dict:
 
 
 @mcp.tool()
-async def search_movie_releases(movie_id: int, apply_quality: bool = True) -> list[dict]:
-    """Search Prowlarr for releases of a library movie (by title + year)."""
+async def search_movie_releases(movie_id: int, apply_quality: bool = True) -> dict:
+    """Search Prowlarr for releases of a library movie (by title + year). Returns
+    an envelope: {query, count, releases}."""
     movie = app().db.get_movie(movie_id)
     if not movie:
-        return [{"error": f"No movie with id {movie_id}"}]
+        return {"error": f"No movie with id {movie_id}"}
     query = f"{movie['title']} {movie['year']}" if movie["year"] else movie["title"]
-    return await app().search_releases(
+    releases = await app().search_releases(
         query, categories=[CAT_MOVIE], apply_quality=apply_quality
     )
+    return {"query": query, "count": len(releases), "releases": releases}
 
 
 @mcp.tool()
@@ -659,8 +694,9 @@ async def grab_movie(movie_id: int, client_name: Optional[str] = None) -> dict:
     movie = app().db.get_movie(movie_id)
     if not movie:
         return {"error": f"No movie with id {movie_id}"}
-    releases = await search_movie_releases(movie_id)
-    if not releases or "error" in releases[0]:
+    result = await search_movie_releases(movie_id)
+    releases = result.get("releases", [])
+    if not releases:
         return {"error": "No releases found", "movie": movie["title"]}
     best = releases[0]
     grab = await app().grab(
@@ -678,16 +714,18 @@ async def grab_movie(movie_id: int, client_name: Optional[str] = None) -> dict:
 @mcp.tool()
 async def search_releases(
     query: str,
-    media_type: str = "tv",
+    media_type: Literal["tv", "movie"] = "tv",
     apply_quality: bool = True,
     indexer_ids: Optional[list[int]] = None,
-) -> list[dict]:
+) -> dict:
     """Search Prowlarr for torrent releases. When ``apply_quality`` is true,
-    results are filtered by the configured quality rules and ranked best-first."""
+    results are filtered by the configured quality rules and ranked best-first.
+    Returns an envelope: {query, count, releases}."""
     cats = [CAT_MOVIE] if media_type == "movie" else [CAT_TV]
-    return await app().search_releases(
+    releases = await app().search_releases(
         query, categories=cats, indexer_ids=indexer_ids, apply_quality=apply_quality
     )
+    return {"query": query, "count": len(releases), "releases": releases}
 
 
 @mcp.tool()
@@ -714,7 +752,13 @@ async def search_episode_releases(
     matched = [
         r for r in all_releases if title_matches_episode(r["title"], season, episode, absolute)
     ]
-    return {"query": query, "matched": matched, "other": [r for r in all_releases if r not in matched]}
+    other = [r for r in all_releases if r not in matched]
+    return {
+        "query": query,
+        "matched": matched,
+        "other_count": len(other),
+        "other_sample": other[:5],  # capped — full list is context waste
+    }
 
 
 @mcp.tool()
@@ -783,7 +827,11 @@ async def grab_episode(
 # Download tracking
 # --------------------------------------------------------------------------- #
 @mcp.tool()
-def list_downloads(status: Optional[str] = None) -> list[dict]:
+def list_downloads(
+    status: Optional[
+        Literal["grabbed", "downloading", "completed", "imported", "failed", "removed"]
+    ] = None,
+) -> list[dict]:
     """List grabs recorded by LLMarr, optionally filtered by status."""
     return app().db.list_downloads(status=status)
 
@@ -880,10 +928,12 @@ async def plex_login_start(product: str = "LLMarr") -> dict:
 
 @mcp.tool()
 async def plex_login_poll(
-    url: str = "http://localhost:32400", max_wait_seconds: int = 90
+    url: Optional[str] = None, max_wait_seconds: int = 30
 ) -> dict:
-    """Wait for the pending Plex login to be approved, then store the token and
-    Plex URL. Blocks up to ``max_wait_seconds``; if not yet approved, call again."""
+    """Wait for the pending Plex login to be approved, then store the token.
+    Blocks up to ``max_wait_seconds`` (call again if not yet approved). ``url`` is
+    only used to set the Plex URL when none is configured yet (default
+    http://localhost:32400); it never overwrites an existing one."""
     import asyncio
 
     from . import plexauth
@@ -899,8 +949,8 @@ async def plex_login_poll(
         if token:
             def _m(c):
                 c.plex.token = token
-                if url:
-                    c.plex.url = url
+                if not c.plex.url:  # don't clobber an already-configured URL
+                    c.plex.url = url or "http://localhost:32400"
             app().store.mutate(_m)
             app().db.set_kv("plex_pin_id", "")
             return {"authorized": True, "url": app().config.plex.url,
@@ -908,6 +958,26 @@ async def plex_login_poll(
         await asyncio.sleep(3)
         waited += 3
     return {"authorized": False, "message": "Not approved yet — enter the code, then poll again."}
+
+
+@mcp.tool()
+async def import_plex_library(
+    dry_run: bool = True,
+    monitored: bool = False,
+    media_type: Literal["all", "tv", "movie"] = "all",
+    sections: Optional[list[str]] = None,
+) -> dict:
+    """Autodetect existing shows & movies in your Plex libraries and register them
+    in LLMarr as owned catalog entries (so they aren't re-downloaded), using Plex's
+    external ids (TMDB when available, else a Plex key). ``dry_run=true`` (default)
+    previews without writing and lists ``sections_available`` — review it, then
+    re-run with ``sections=["Anime","Movies"]`` to include only the libraries you
+    want and ``dry_run=false``. Series are catalogued WITHOUT episodes; to enable
+    episode monitoring/auto-grab for a show, add_series it afterwards with its
+    provider id."""
+    return await app().import_from_plex(
+        dry_run=dry_run, monitored=monitored, media_type=media_type, sections=sections
+    )
 
 
 @mcp.tool()

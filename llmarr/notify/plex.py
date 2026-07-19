@@ -50,6 +50,31 @@ class PlexNotifier:
             )
         return out
 
+    def catalog(self) -> list[dict]:
+        """Enumerate every show/movie already in the Plex libraries with whatever
+        external ids Plex knows (tmdb/tvdb/imdb/anidb/…), for importing the
+        existing collection into LLMarr."""
+        items = []
+        for section in self.server.library.sections():
+            if section.type not in ("show", "movie"):
+                continue
+            for it in section.all():
+                guids = {}
+                for g in getattr(it, "guids", None) or []:
+                    gid = getattr(g, "id", "") or ""
+                    if "://" in gid:
+                        k, v = gid.split("://", 1)
+                        guids[k] = v
+                items.append({
+                    "type": section.type,
+                    "section": section.title,
+                    "title": it.title,
+                    "year": getattr(it, "year", None),
+                    "rating_key": str(it.ratingKey),
+                    "guids": guids,
+                })
+        return items
+
     def test(self) -> dict:
         sections = [
             {"title": s.title, "type": s.type} for s in self.server.library.sections()

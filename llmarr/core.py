@@ -89,7 +89,6 @@ class App:
         self,
         provider_id: str,
         monitored: bool = True,
-        quality_profile: Optional[str] = None,
         root_folder: Optional[str] = None,
         seasons: Optional[list[int]] = None,
         provider: Optional[str] = None,
@@ -106,21 +105,21 @@ class App:
             status=info.status,
             poster=info.poster,
             monitored=1 if monitored else 0,
-            quality_profile=quality_profile,
             root_folder=root_folder,
             folder_name=folder,
             absolute_numbering=1 if getattr(prov, "absolute_numbering", False) else 0,
         )
+        # Episodes present before this refresh — their monitored flags (the user's
+        # per-season choices) must be preserved; only newly-added episodes get the
+        # monitoring rule applied.
+        existing = {(e["season"], e["episode"]) for e in self.db.list_episodes(series_id)}
         for ep in info.episodes:
-            ep_monitored = monitored and (seasons is None or ep.season in seasons)
             self.db.upsert_episode(
-                series_id,
-                ep.season,
-                ep.episode,
-                title=ep.title,
-                air_date=ep.air_date,
+                series_id, ep.season, ep.episode, title=ep.title, air_date=ep.air_date
             )
-            # Apply monitoring only on first insert semantics: set explicitly.
+            if (ep.season, ep.episode) in existing:
+                continue
+            ep_monitored = monitored and (seasons is None or ep.season in seasons)
             row = self.db.query_one(
                 "SELECT id FROM episodes WHERE series_id=? AND season=? AND episode=?",
                 (series_id, ep.season, ep.episode),
@@ -444,7 +443,6 @@ class App:
         self,
         provider_id: str,
         monitored: bool = True,
-        quality_profile: Optional[str] = None,
         root_folder: Optional[str] = None,
         provider: Optional[str] = None,
     ) -> dict:
@@ -459,11 +457,90 @@ class App:
             status=info.status,
             poster=info.poster,
             monitored=1 if monitored else 0,
-            quality_profile=quality_profile,
             root_folder=root_folder,
             folder_name=folder,
         )
         return self.db.get_movie(movie_id)
+
+    # -- import existing Plex library --------------------------------------- #
+    async def import_from_plex(
+        self,
+        dry_run: bool = True,
+        monitored: bool = False,
+        media_type: str = "all",
+        sections: Optional[list[str]] = None,
+    ) -> dict:
+        """Register the shows/movies already in Plex as owned library entries so
+        they aren't re-downloaded. Uses Plex's external ids (TMDB when present,
+        else a Plex rating key). ``sections`` restricts to specific Plex library
+        names (e.g. exclude an "AV" section). Series are catalogued without
+        episodes — activate monitoring for one via add_series with a provider id."""
+        items = await asyncio.to_thread(self.plex().catalog)
+        anime_section = self.config.plex.tv_section
+        # Report what's available so the caller can pick sections on a dry run.
+        by_section: dict[str, int] = {}
+        for it in items:
+            by_section[it["section"]] = by_section.get(it["section"], 0) + 1
+
+        preview, counts = [], {"series": 0, "movies": 0, "skipped": 0}
+        for it in items:
+            if sections is not None and it["section"] not in sections:
+                continue
+            if media_type == "tv" and it["type"] != "show":
+                continue
+            if media_type == "movie" and it["type"] != "movie":
+                continue
+            guids = it.get("guids") or {}
+            if guids.get("tmdb"):
+                provider, pid = "tmdb", guids["tmdb"]
+            else:
+                provider, pid = "plex", it["rating_key"]
+            absolute = it["type"] == "show" and it["section"] == anime_section
+            entry = {
+                "title": it["title"], "year": it["year"], "type": it["type"],
+                "section": it["section"], "provider": provider, "provider_id": pid,
+                "absolute_numbering": absolute,
+            }
+            preview.append(entry)
+            if dry_run:
+                continue
+
+            folder = _folder_name(it["title"], it["year"])
+            if it["type"] == "movie":
+                self.db.upsert_movie(
+                    provider=provider, provider_id=str(pid), title=it["title"],
+                    year=it["year"], monitored=1 if monitored else 0,
+                    folder_name=folder, movie_status="downloaded",
+                )
+                counts["movies"] += 1
+            else:
+                self.db.upsert_series(
+                    provider=provider, provider_id=str(pid), title=it["title"],
+                    year=it["year"], monitored=1 if monitored else 0,
+                    folder_name=folder, absolute_numbering=1 if absolute else 0,
+                )
+                counts["series"] += 1
+
+        note = (
+            "Series are catalogued without episodes. To enable episode "
+            "monitoring/auto-grab for one, call add_series with its provider id."
+        )
+        if dry_run and sections is None:
+            note = (
+                "DRY RUN across ALL libraries — review sections_available and re-run "
+                "with sections=[…] to include only the ones you want. " + note
+            )
+        return {
+            "dry_run": dry_run,
+            "scanned": len(items),
+            "sections_available": by_section,
+            "sections_used": sections,
+            "matched": len(preview),
+            "registered": None if dry_run else counts,
+            "with_tmdb_id": sum(1 for e in preview if e["provider"] == "tmdb"),
+            "sample": preview[:40],
+            "note": note,
+        }
 
     # -- season packs ------------------------------------------------------- #
     async def grab_season(

@@ -92,6 +92,38 @@ async def test_rss_poll_anime_release_ignored_for_standard_series(configured, fa
     assert result["grabbed"] == []  # absolute matching not applied to standard TV
 
 
+async def test_readd_series_preserves_monitored_flags(app, fakes, monkeypatch):
+    info = SeriesInfo(
+        provider="tmdb", provider_id="1", title="Show", seasons=[1],
+        episodes=[EpisodeInfo(season=1, episode=1), EpisodeInfo(season=1, episode=2)],
+    )
+    monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](series_info=info))
+    r = await app.add_series("1")
+    sid = r["id"]
+    # user unmonitors episode 1
+    e1 = app.db.list_episodes(sid)[0]
+    app.db.execute("UPDATE episodes SET monitored=0 WHERE id=?", (e1["id"],))
+
+    # re-add (metadata refresh) must NOT re-monitor episode 1
+    await app.add_series("1")
+    assert app.db.get_episode(e1["id"])["monitored"] == 0
+
+
+async def test_readd_series_applies_rule_to_new_episodes(app, fakes, monkeypatch):
+    info1 = SeriesInfo(provider="tmdb", provider_id="1", title="Show", seasons=[1],
+                       episodes=[EpisodeInfo(season=1, episode=1)])
+    monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](series_info=info1))
+    r = await app.add_series("1", seasons=[1])
+    sid = r["id"]
+    # season 2 airs later; re-add with a new episode, monitoring only season 1
+    info2 = SeriesInfo(provider="tmdb", provider_id="1", title="Show", seasons=[1, 2],
+                       episodes=[EpisodeInfo(season=1, episode=1), EpisodeInfo(season=2, episode=1)])
+    monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](series_info=info2))
+    await app.add_series("1", seasons=[1])
+    mon = {(e["season"], e["episode"]): e["monitored"] for e in app.db.list_episodes(sid)}
+    assert mon[(1, 1)] == 1 and mon[(2, 1)] == 0  # new S2 ep not monitored (not in seasons)
+
+
 async def test_add_movie(app, fakes, monkeypatch):
     info = MovieInfo(provider="tmdb", provider_id="9", title="Dune", year=2021)
     monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](movie_info=info))

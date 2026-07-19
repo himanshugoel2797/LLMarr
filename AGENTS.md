@@ -118,6 +118,20 @@ in sync when adding a config step or provider/client type.
   flagged series — never for standard TV, to avoid false `Show - 12` matches.
   Absolute parser is regex-heavy; if you touch it, keep the false-positive tests
   in test_parsing.py green (resolutions/years must not parse as episodes).
+- Import existing library: `import_plex_library` / `App.import_from_plex` +
+  `PlexNotifier.catalog()` register Plex shows/movies as owned catalog entries
+  (provider=tmdb from Plex guids, else provider="plex"+ratingKey; movies marked
+  downloaded; anime-section shows get absolute_numbering). Series have NO episodes
+  until add_series activates them. `sections=[…]` scopes which libraries; dry_run
+  returns `sections_available`.
+- Tool-interface conventions (from a design review): config Literals appear in
+  BOTH the pydantic model and the tool signature (FastMCP emits enum schema);
+  config models set `validate_assignment=True` as a backstop. Search tools return
+  `{query,count,releases}` envelopes; list_series/list_movies return compact rows
+  (full=true for all fields, limit to cap). configure_* return the section they
+  set. Deferred (not yet done): full error-contract unification, tool renames
+  (set_movie_monitored→set_series_monitored symmetry, scan_plex→plex_scan,
+  download_status→get_download), auth-tool consolidation.
 - Plex auth: either a manual token (`configure_plex`) or browser login
   (`plexauth.py` PIN flow → `plex_login_start`/`plex_login_poll`, persistent
   `plex.client_id`, pending pin id in the `kv` table). `plex_discover_libraries`

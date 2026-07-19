@@ -152,12 +152,16 @@ class FakeDownloadClient:
 
 
 class FakePlex:
-    def __init__(self):
+    def __init__(self, catalog_items=None):
         self.scans = []
+        self._catalog = catalog_items or []
 
     def scan(self, section=None, path=None):
         self.scans.append((section, path))
         return {"ok": True, "section": section, "path": path}
+
+    def catalog(self):
+        return list(self._catalog)
 
     def test(self):
         return {"ok": True, "friendly_name": "fake"}
