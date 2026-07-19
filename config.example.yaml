@@ -21,7 +21,7 @@ server:
   oauth_signing_key: null
 
 metadata:
-  provider: tmdb
+  provider: tmdb            # tmdb (TV+movies, needs key) | jikan (anime, no key)
   tmdb_api_key: null        # get a free v3 key from themoviedb.org
   language: en-US
 

@@ -8,15 +8,20 @@ from .base import (
     SeriesInfo,
     SeriesSearchResult,
 )
+from .jikan import JikanProvider
 from .tmdb import TMDBProvider
 
 
-def get_provider(config) -> MetadataProvider:
-    """Instantiate the configured metadata provider."""
+def get_provider(config, name: str | None = None) -> MetadataProvider:
+    """Instantiate a metadata provider. ``name`` overrides the configured default
+    (e.g. ``"jikan"`` for a single anime lookup while the default stays TMDB)."""
     meta = config.metadata
-    if meta.provider == "tmdb":
+    provider = name or meta.provider
+    if provider == "tmdb":
         return TMDBProvider(api_key=meta.tmdb_api_key, language=meta.language)
-    raise ValueError(f"Unknown metadata provider: {meta.provider}")
+    if provider == "jikan":
+        return JikanProvider(language=meta.language)
+    raise ValueError(f"Unknown metadata provider: {provider}")
 
 
 __all__ = [
@@ -27,5 +32,6 @@ __all__ = [
     "MovieSearchResult",
     "MovieInfo",
     "TMDBProvider",
+    "JikanProvider",
     "get_provider",
 ]

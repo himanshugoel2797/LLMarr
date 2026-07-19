@@ -237,6 +237,28 @@ poller auto-grabs by title+year while the movie is missing, or grab on demand
 with `grab_movie` / `search_movie_releases`. Completed movie downloads import and
 scan the Plex movie section.
 
+## Metadata providers (incl. anime)
+
+The metadata source is pluggable per lookup:
+
+- **`tmdb`** (default) — TV + movies. Needs a free API key.
+- **`jikan`** — anime via [MyAnimeList](https://myanimelist.net) through the
+  [Jikan](https://jikan.moe) API. **No API key.** Per-episode titles included.
+
+Pass `provider="jikan"` to `search_series`/`add_series` (or the movie variants)
+for a single anime lookup, or make it the default with
+`configure_metadata(provider="jikan")`. Each search result carries its own
+`provider`/`provider_id`, so mix sources freely in one library.
+
+> **Anime episode numbering:** MyAnimeList models each cour/season as one entry
+> with absolute episode numbers, so LLMarr stores anime as **season 1, episodes
+> 1..N**. Anime releases are commonly named with absolute numbers
+> (`[Group] Show - 12 [1080p]`), which the default `SxxExx` matcher does not
+> recognise — so *manual* grabs (`grab_release` with a magnet/URL) and free-text
+> `search_releases` work, but per-episode auto-matching
+> (`grab_episode` / RSS auto-grab) is limited for anime until absolute-numbering
+> matching lands.
+
 ## Tool surface
 
 | Area | Tools |

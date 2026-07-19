@@ -91,11 +91,17 @@ tool functions, so it's reachable from both and testable without the MCP layer.
   `get_config`; reveal the auth token via the dedicated `get_auth_token` tool.
 - The RSS poller re-reads config each tick, so config changes apply without a
   restart (except the HTTP auth token, which is bound at server start).
-- Only qBittorrent, TMDB, Prowlarr, Plex are implemented. The ABCs exist so new
-  providers/clients slot in without touching `core`.
+- Metadata providers: `tmdb` (TV+movies, key) and `jikan` (anime via
+  MyAnimeList, no key). `get_provider(config, name)` selects one; tools take a
+  `provider=` arg. Jikan flakes with 5xx (it proxies MAL) — the provider retries
+  with backoff. Anime = season 1 with absolute episode numbers.
+- Only qBittorrent, Prowlarr, Plex are implemented for their layers. The ABCs
+  exist so new providers/clients slot in without touching `core`.
 
 ## Not yet implemented (good next tasks)
 
+- Absolute-numbering release matching for anime (`[Group] Show - 12`), gated to
+  anime series so it doesn't cause false matches for regular TV.
 - Full Sonarr custom-format quality profiles.
 - Double-episode file parsing (`S01E01E02`).
 - Download clients beyond qBittorrent (Transmission/Deluge) via `DownloadClient`.

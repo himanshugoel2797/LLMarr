@@ -21,7 +21,8 @@ from pydantic import BaseModel, Field
 # Sub-models
 # --------------------------------------------------------------------------- #
 class MetadataConfig(BaseModel):
-    provider: Literal["tmdb"] = "tmdb"
+    # tmdb (TV + movies, needs a free key) | jikan (MyAnimeList/anime, no key).
+    provider: Literal["tmdb", "jikan"] = "tmdb"
     tmdb_api_key: Optional[str] = None
     language: str = "en-US"
 

@@ -445,9 +445,12 @@ async def test_connections() -> dict:
 # Metadata / library
 # --------------------------------------------------------------------------- #
 @mcp.tool()
-async def search_series(query: str) -> list[dict]:
-    """Search the metadata provider for TV series matching ``query``."""
-    results = await app().provider().search_series(query)
+async def search_series(query: str, provider: Optional[str] = None) -> list[dict]:
+    """Search for TV series matching ``query``. ``provider`` overrides the default
+    metadata source — use ``"jikan"`` for anime (MyAnimeList, no key) or
+    ``"tmdb"`` for general TV. Each result carries its own ``provider``/
+    ``provider_id`` to pass to add_series."""
+    results = await app().provider(provider).search_series(query)
     return [r.model_dump() for r in results]
 
 
@@ -458,16 +461,20 @@ async def add_series(
     quality_profile: Optional[str] = None,
     root_folder: Optional[str] = None,
     seasons: Optional[list[int]] = None,
+    provider: Optional[str] = None,
 ) -> dict:
-    """Add a series to the library by its metadata provider id (e.g. a TMDB id),
-    fetching its full episode list. ``seasons`` optionally limits which seasons
-    are monitored for auto-grab (default: all)."""
+    """Add a series to the library by its metadata provider id, fetching its full
+    episode list. Pass the same ``provider`` used to find it (e.g. ``"jikan"`` for
+    an anime from MyAnimeList). ``seasons`` optionally limits which seasons are
+    monitored for auto-grab (default: all). Note: anime is modelled as season 1
+    with absolute episode numbers."""
     return await app().add_series(
         provider_id,
         monitored=monitored,
         quality_profile=quality_profile,
         root_folder=root_folder,
         seasons=seasons,
+        provider=provider,
     )
 
 
@@ -526,9 +533,10 @@ def remove_series(series_id: int) -> dict:
 # Movies
 # --------------------------------------------------------------------------- #
 @mcp.tool()
-async def search_movies(query: str) -> list[dict]:
-    """Search the metadata provider for movies matching ``query``."""
-    results = await app().provider().search_movies(query)
+async def search_movies(query: str, provider: Optional[str] = None) -> list[dict]:
+    """Search for movies matching ``query``. ``provider`` overrides the default —
+    ``"jikan"`` for anime films (MyAnimeList, no key), ``"tmdb"`` otherwise."""
+    results = await app().provider(provider).search_movies(query)
     return [r.model_dump() for r in results]
 
 
@@ -538,14 +546,17 @@ async def add_movie(
     monitored: bool = True,
     quality_profile: Optional[str] = None,
     root_folder: Optional[str] = None,
+    provider: Optional[str] = None,
 ) -> dict:
-    """Add a movie to the library by its metadata provider id (e.g. a TMDB id).
-    A monitored movie is auto-grabbed by the RSS poller while it is still missing."""
+    """Add a movie to the library by its metadata provider id. Pass the same
+    ``provider`` used to find it. A monitored movie is auto-grabbed by the RSS
+    poller while it is still missing."""
     return await app().add_movie(
         provider_id,
         monitored=monitored,
         quality_profile=quality_profile,
         root_folder=root_folder,
+        provider=provider,
     )
 
 

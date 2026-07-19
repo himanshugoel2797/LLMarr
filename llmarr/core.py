@@ -38,8 +38,8 @@ class App:
         return self.store.config
 
     # -- service factories -------------------------------------------------- #
-    def provider(self):
-        return get_provider(self.config)
+    def provider(self, name: Optional[str] = None):
+        return get_provider(self.config, name)
 
     def prowlarr(self) -> ProwlarrClient:
         p = self.config.prowlarr
@@ -84,8 +84,9 @@ class App:
         quality_profile: Optional[str] = None,
         root_folder: Optional[str] = None,
         seasons: Optional[list[int]] = None,
+        provider: Optional[str] = None,
     ) -> dict:
-        info = await self.provider().get_series(provider_id)
+        info = await self.provider(provider).get_series(provider_id)
         folder = _folder_name(info.title, info.year)
         series_id = self.db.upsert_series(
             provider=info.provider,
@@ -377,8 +378,9 @@ class App:
         monitored: bool = True,
         quality_profile: Optional[str] = None,
         root_folder: Optional[str] = None,
+        provider: Optional[str] = None,
     ) -> dict:
-        info = await self.provider().get_movie(provider_id)
+        info = await self.provider(provider).get_movie(provider_id)
         folder = _folder_name(info.title, info.year)
         movie_id = self.db.upsert_movie(
             provider=info.provider,

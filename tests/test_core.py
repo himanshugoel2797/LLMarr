@@ -33,7 +33,7 @@ async def test_add_series_populates_episodes(app, fakes, monkeypatch):
             EpisodeInfo(season=2, episode=1, title="C"),
         ],
     )
-    monkeypatch.setattr(app, "provider", lambda: fakes["Provider"](series_info=info))
+    monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](series_info=info))
 
     result = await app.add_series("1", seasons=[2])
     assert result["title"] == "Severance"
@@ -47,7 +47,7 @@ async def test_add_series_populates_episodes(app, fakes, monkeypatch):
 
 async def test_add_movie(app, fakes, monkeypatch):
     info = MovieInfo(provider="tmdb", provider_id="9", title="Dune", year=2021)
-    monkeypatch.setattr(app, "provider", lambda: fakes["Provider"](movie_info=info))
+    monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](movie_info=info))
     result = await app.add_movie("9")
     assert result["title"] == "Dune"
     assert result["folder_name"] == "Dune (2021)"
