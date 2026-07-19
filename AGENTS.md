@@ -91,10 +91,13 @@ tool functions, so it's reachable from both and testable without the MCP layer.
   `get_config`; reveal the auth token via the dedicated `get_auth_token` tool.
 - The RSS poller re-reads config each tick, so config changes apply without a
   restart (except the HTTP auth token, which is bound at server start).
-- Metadata providers: `tmdb` (TV+movies, key) and `jikan` (anime via
-  MyAnimeList, no key). `get_provider(config, name)` selects one; tools take a
-  `provider=` arg. Jikan flakes with 5xx (it proxies MAL) — the provider retries
-  with backoff. Anime = season 1 with absolute episode numbers.
+- Metadata providers: `tmdb` (TV+movies, key) and `jikan` (anime, no key).
+  `get_provider(config, name)` selects one; tools take a `provider=` arg. The
+  `jikan` provider hits a Jikan-compatible API whose base URL is
+  `metadata.anime_api_url` (default Tenrai `api.tenrai.org/v1` — a Jikan v4
+  mirror, since Jikan is being discontinued). These MAL mirrors flake with 5xx —
+  the provider retries with backoff and enforces 3/s + 60/min via a shared
+  `_RateLimiter`. Anime = season 1 with absolute episode numbers.
 - Anime absolute numbering: a provider sets `absolute_numbering=True`; add_series
   stores it on `series.absolute_numbering`. `parsing.title_matches_episode(...,
   absolute=)` and the importer dispatch to absolute parsing

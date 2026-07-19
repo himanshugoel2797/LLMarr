@@ -24,6 +24,10 @@ class MetadataConfig(BaseModel):
     # tmdb (TV + movies, needs a free key) | jikan (MyAnimeList/anime, no key).
     provider: Literal["tmdb", "jikan"] = "tmdb"
     tmdb_api_key: Optional[str] = None
+    # Base URL for the Jikan-compatible anime API. Defaults to Tenrai
+    # (api.tenrai.org/v1), a 1:1 Jikan v4 mirror — Jikan itself is being
+    # discontinued. Point it at api.jikan.moe/v4 or any other mirror if needed.
+    anime_api_url: str = "https://api.tenrai.org/v1"
     language: str = "en-US"
 
 

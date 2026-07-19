@@ -20,7 +20,7 @@ def get_provider(config, name: str | None = None) -> MetadataProvider:
     if provider == "tmdb":
         return TMDBProvider(api_key=meta.tmdb_api_key, language=meta.language)
     if provider == "jikan":
-        return JikanProvider(language=meta.language)
+        return JikanProvider(base_url=meta.anime_api_url, language=meta.language)
     raise ValueError(f"Unknown metadata provider: {provider}")
 
 

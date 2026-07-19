@@ -1,10 +1,16 @@
-"""Anime metadata via Jikan — the unofficial MyAnimeList REST API.
+"""Anime metadata via a Jikan-compatible MyAnimeList REST API.
 
-Jikan (https://jikan.moe) exposes MyAnimeList's catalogue with **no API key**,
-which makes it a drop-in anime-specialised metadata source. It proxies MAL, so it
-can return transient 5xx when MAL is slow; requests are retried with backoff. Its
-documented rate limits (3 requests/second, 60/minute) are enforced globally by a
-shared limiter (:class:`_RateLimiter`) across all requests and provider instances.
+Exposes MyAnimeList's catalogue with **no API key**, a drop-in anime-specialised
+metadata source. The default base URL is Tenrai (``api.tenrai.org/v1``), a 1:1
+mirror of Jikan v4 — the original Jikan (``api.jikan.moe/v4``) is being
+discontinued, and Tenrai is API-compatible, so only the base URL changes. It is
+configurable via ``metadata.anime_api_url``.
+
+These MAL mirrors can return transient 5xx when MAL is slow, so requests are
+retried with backoff. Jikan's documented rate limits (3 requests/second,
+60/minute) are enforced globally by a shared limiter (:class:`_RateLimiter`)
+across all requests and provider instances (Tenrai is more generous, but the
+conservative caps keep any mirror happy).
 
 Anime don't use Sonarr-style season/episode numbering — each MAL entry is one
 cour/season with episodes numbered from 1 — so entries are modelled as a single
@@ -29,7 +35,7 @@ from .base import (
     SeriesSearchResult,
 )
 
-_BASE = "https://api.jikan.moe/v4"
+_DEFAULT_BASE = "https://api.tenrai.org/v1"  # Tenrai — Jikan v4-compatible mirror
 _MAX_EPISODE_PAGES = 25  # safety cap (~2500 episodes)
 
 
@@ -95,9 +101,10 @@ class JikanProvider(MetadataProvider):
     name = "jikan"
     absolute_numbering = True
 
-    def __init__(self, language: str | None = None):
-        # No API key. `language` is accepted for interface parity but Jikan/MAL
-        # titles are returned in romaji/english regardless.
+    def __init__(self, base_url: str | None = None, language: str | None = None):
+        # No API key. `language` is accepted for interface parity but MAL titles
+        # are returned in romaji/english regardless.
+        self.base = (base_url or _DEFAULT_BASE).rstrip("/")
         self.language = language
 
     async def _get(self, client: httpx.AsyncClient, path: str, **params) -> dict:
@@ -105,7 +112,7 @@ class JikanProvider(MetadataProvider):
         for attempt in range(4):
             await _LIMITER.acquire()  # respect Jikan's 3/s + 60/min limits
             try:
-                resp = await client.get(f"{_BASE}{path}", params=params)
+                resp = await client.get(f"{self.base}{path}", params=params)
             except httpx.HTTPError as exc:  # network hiccup
                 last_exc = exc
                 await asyncio.sleep(0.5 * (attempt + 1))

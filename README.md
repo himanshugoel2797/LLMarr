@@ -242,8 +242,11 @@ scan the Plex movie section.
 The metadata source is pluggable per lookup:
 
 - **`tmdb`** (default) — TV + movies. Needs a free API key.
-- **`jikan`** — anime via [MyAnimeList](https://myanimelist.net) through the
-  [Jikan](https://jikan.moe) API. **No API key.** Per-episode titles included.
+- **`jikan`** — anime via [MyAnimeList](https://myanimelist.net) through a
+  Jikan-compatible API. **No API key.** Per-episode titles included. Defaults to
+  [Tenrai](https://tenrai.org) (`api.tenrai.org/v1`), a 1:1 Jikan v4 mirror, as
+  the original Jikan is being discontinued; override with
+  `configure_metadata(anime_api_url=…)`.
 
 Pass `provider="jikan"` to `search_series`/`add_series` (or the movie variants)
 for a single anime lookup, or make it the default with

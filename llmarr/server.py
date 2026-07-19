@@ -72,16 +72,23 @@ def get_config() -> dict:
 @mcp.tool()
 def configure_metadata(
     tmdb_api_key: Optional[str] = None,
-    provider: str = "tmdb",
+    provider: Optional[str] = None,
     language: Optional[str] = None,
+    anime_api_url: Optional[str] = None,
 ) -> dict:
-    """Set the metadata provider and its credentials (TMDB by default)."""
+    """Set the default metadata provider and its settings. ``provider`` is
+    ``tmdb`` (TV+movies, needs ``tmdb_api_key``) or ``jikan`` (anime, no key).
+    ``anime_api_url`` overrides the Jikan-compatible anime API base URL (defaults
+    to Tenrai, api.tenrai.org/v1)."""
     def _m(c):
-        c.metadata.provider = provider
+        if provider is not None:
+            c.metadata.provider = provider
         if tmdb_api_key is not None:
             c.metadata.tmdb_api_key = tmdb_api_key
         if language is not None:
             c.metadata.language = language
+        if anime_api_url is not None:
+            c.metadata.anime_api_url = anime_api_url
     app().store.mutate(_m)
     return app().store.redacted()["metadata"]
 

@@ -27,7 +27,7 @@ def handler_for(routes, calls=None):
 
 
 SEARCH = {
-    "/v4/anime": {
+    "/v1/anime": {
         "data": [
             {
                 "mal_id": 52991,
@@ -43,7 +43,7 @@ SEARCH = {
     }
 }
 DETAIL = {
-    "/v4/anime/52991": {
+    "/v1/anime/52991": {
         "data": {
             "mal_id": 52991,
             "title": "Sousou no Frieren",
@@ -57,7 +57,7 @@ DETAIL = {
     }
 }
 EPISODES = {
-    "/v4/anime/52991/episodes": {
+    "/v1/anime/52991/episodes": {
         "data": [
             {"mal_id": 1, "title": "The Journey's End", "aired": "2023-09-29T00:00:00+00:00"},
             {"mal_id": 2, "title": "It Didn't Have to Be Magic", "aired": "2023-09-29T00:00:00+00:00"},
@@ -65,6 +65,25 @@ EPISODES = {
         "pagination": {"has_next_page": False},
     }
 }
+
+
+def test_default_base_url_is_tenrai():
+    assert jikan.JikanProvider().base == "https://api.tenrai.org/v1"
+
+
+async def test_custom_base_url_is_used(mock_httpx):
+    seen = {}
+
+    def handler(request):
+        seen["host"] = request.url.host
+        seen["path"] = request.url.path
+        return httpx.Response(200, json=SEARCH["/v1/anime"])
+
+    mock_httpx(jikan, handler)
+    p = jikan.JikanProvider(base_url="https://api.jikan.moe/v4")
+    await p.search_series("frieren")
+    assert seen["host"] == "api.jikan.moe"
+    assert seen["path"] == "/v4/anime"
 
 
 async def test_search_series_prefers_english_title(mock_httpx):
@@ -92,8 +111,8 @@ async def test_get_series_flattens_episodes_as_season_1(mock_httpx):
 
 async def test_get_series_falls_back_to_count_when_no_episode_list(mock_httpx):
     routes = {
-        "/v4/anime/1": {"data": {"mal_id": 1, "title": "X", "episodes": 3, "type": "TV"}},
-        "/v4/anime/1/episodes": {"data": [], "pagination": {"has_next_page": False}},
+        "/v1/anime/1": {"data": {"mal_id": 1, "title": "X", "episodes": 3, "type": "TV"}},
+        "/v1/anime/1/episodes": {"data": [], "pagination": {"has_next_page": False}},
     }
     mock_httpx(jikan, handler_for(routes))
     p = jikan.JikanProvider()
@@ -113,11 +132,11 @@ async def test_retries_on_504_then_succeeds(mock_httpx, no_sleep):
     state = {"n": 0}
 
     def handler(request):
-        if request.url.path == "/v4/anime":
+        if request.url.path == "/v1/anime":
             state["n"] += 1
             if state["n"] < 3:
                 return httpx.Response(504, json={"status": 504})
-            return httpx.Response(200, json=SEARCH["/v4/anime"])
+            return httpx.Response(200, json=SEARCH["/v1/anime"])
         return httpx.Response(404, json={})
 
     mock_httpx(jikan, handler)
@@ -167,7 +186,7 @@ async def test_rate_limiter_enforces_per_minute(fake_clock):
 
 
 async def test_get_movie(mock_httpx):
-    routes = {"/v4/anime/5114": {"data": {
+    routes = {"/v1/anime/5114": {"data": {
         "mal_id": 5114, "title": "Some Movie", "type": "Movie", "status": "Finished Airing",
         "aired": {"prop": {"from": {"year": 2011}}},
     }}}
