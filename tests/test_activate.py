@@ -143,3 +143,48 @@ async def test_activate_no_plex_still_adds_episodes(app, fakes, monkeypatch):
     )
     res = await app.activate_series(sid, provider="jikan", provider_id="52991")
     assert res["episodes"] == 5 and res["marked_downloaded"] == 0 and res["still_missing"] == 5
+
+
+# --------------------------------------------------------------------------- #
+# bulk_activate_series (G6)
+# --------------------------------------------------------------------------- #
+async def test_bulk_activate_only_non_anime_tmdb(app, fakes, monkeypatch):
+    app.store.mutate(lambda c: setattr(c.plex, "anime_section", "Anime"))
+    # A plain tmdb show -> activatable.
+    s_tv = app.db.upsert_series(provider="tmdb", provider_id="55", title="Show",
+                                plex_section="TV Shows")
+    # An anime tmdb show (from the Anime section) -> skipped.
+    s_anime = app.db.upsert_series(provider="tmdb", provider_id="120089", title="Blade x Soul",
+                                   plex_section="Anime")
+    # A plex-only entry (no metadata id) -> skipped.
+    s_plex = app.db.upsert_series(provider="plex", provider_id="101", title="Aethering")
+    # An already-activated series (has episodes) -> ignored entirely.
+    s_done = app.db.upsert_series(provider="tmdb", provider_id="77", title="Done",
+                                  plex_section="TV Shows")
+    app.db.upsert_episode(s_done, 1, 1)
+
+    info = SeriesInfo(provider="tmdb", provider_id="55", title="Show", seasons=[1],
+                      episodes=[EpisodeInfo(season=1, episode=1), EpisodeInfo(season=1, episode=2)])
+    monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](series_info=info))
+
+    res = await app.bulk_activate_series(mark_downloaded=False)
+    assert res["activated_count"] == 1
+    assert res["activated"][0]["series_id"] == s_tv
+    reasons = {s["series_id"]: s["reason"] for s in res["skipped"]}
+    assert "MAL id" in reasons[s_anime]
+    assert "no metadata id" in reasons[s_plex]
+    assert s_done not in reasons  # already-activated series isn't reported
+    # the activated series now has episodes + is monitored
+    assert len(app.db.list_episodes(s_tv)) == 2
+    assert app.db.get_series(s_tv)["monitored"] == 1
+
+
+async def test_bulk_activate_respects_limit(app, fakes, monkeypatch):
+    a = app.db.upsert_series(provider="tmdb", provider_id="1", title="A")
+    b = app.db.upsert_series(provider="tmdb", provider_id="2", title="B")
+    info = SeriesInfo(provider="tmdb", provider_id="1", title="A", seasons=[1],
+                      episodes=[EpisodeInfo(season=1, episode=1)])
+    monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](series_info=info))
+    res = await app.bulk_activate_series(mark_downloaded=False, limit=1)
+    assert res["activated_count"] == 1
+    assert any(s["reason"] == "limit reached" for s in res["skipped"])

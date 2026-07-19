@@ -789,6 +789,61 @@ class App:
             "still_missing": sum(1 for e in lib if e["status"] == "missing"),
         }
 
+    async def bulk_activate_series(
+        self, mark_downloaded: bool = True, limit: Optional[int] = None
+    ) -> dict:
+        """Activate every catalogued (episode-less) series whose provider id is
+        safely derivable — i.e. non-anime, tmdb-keyed shows. Anime is skipped on
+        purpose: a Plex tmdb id is NOT a jikan/MyAnimeList id, so those must be
+        activated one-by-one with their MAL id (see activate_series). plex-only
+        entries (no metadata id) are skipped too. Runs sequentially to respect
+        provider rate limits. Reports what was activated and what was skipped and
+        why."""
+        anime_section = self.config.plex.anime_section
+        activated, skipped = [], []
+        count = 0
+        for series in self.db.list_series():
+            if self.db.list_episodes(series["id"]):
+                continue  # already activated / has episodes
+            title = series["title"]
+            is_anime = bool(series.get("absolute_numbering")) or (
+                anime_section is not None and series.get("plex_section") == anime_section
+            )
+            if series["provider"] == "plex":
+                skipped.append({"series_id": series["id"], "title": title,
+                                "reason": "no metadata id (catalogued from Plex without a tmdb guid)"})
+                continue
+            if is_anime:
+                skipped.append({"series_id": series["id"], "title": title,
+                                "reason": "anime — a Plex tmdb id is not a MAL id; "
+                                "activate_series with the jikan/MyAnimeList id"})
+                continue
+            if series["provider"] != "tmdb":
+                skipped.append({"series_id": series["id"], "title": title,
+                                "reason": f"provider {series['provider']} not auto-activatable"})
+                continue
+            if limit is not None and count >= limit:
+                skipped.append({"series_id": series["id"], "title": title,
+                                "reason": "limit reached"})
+                continue
+            try:
+                res = await self.activate_series(series["id"], mark_downloaded=mark_downloaded)
+            except Exception as exc:  # noqa: BLE001
+                skipped.append({"series_id": series["id"], "title": title, "reason": str(exc)})
+                continue
+            if "error" in res:
+                skipped.append({"series_id": series["id"], "title": title, "reason": res["error"]})
+                continue
+            count += 1
+            activated.append({"series_id": series["id"], "title": res["title"],
+                              "episodes": res["episodes"], "marked_downloaded": res["marked_downloaded"]})
+        return {
+            "activated_count": len(activated),
+            "skipped_count": len(skipped),
+            "activated": activated,
+            "skipped": skipped,
+        }
+
     # -- import existing Plex library --------------------------------------- #
     async def import_from_plex(
         self,

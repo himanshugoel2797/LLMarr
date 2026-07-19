@@ -196,8 +196,10 @@ in sync when adding a config step or provider/client type.
 - Double-episode file parsing (`S01E01E02`).
 - Download clients beyond qBittorrent (Transmission/Deluge) via `DownloadClient`.
 - Lidarr-style music.
-- Bulk-activate episodes for a catalogued Plex import (currently one-at-a-time
-  via `activate_series`).
+- (Done — G6) Bulk-activate catalogued Plex imports: `bulk_activate_series`
+  activates every episode-less, non-anime, tmdb-keyed series in one call
+  (sequential, rate-limit-friendly) and reports anime/plex-only entries as
+  skipped with the reason (a Plex tmdb id is not a MAL id).
 
 ## Deploy / run
 

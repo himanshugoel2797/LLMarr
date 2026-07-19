@@ -1189,6 +1189,18 @@ async def import_plex_library(
 
 
 @tool
+async def bulk_activate_series(mark_downloaded: bool = True, limit: Optional[int] = None) -> dict:
+    """Activate ALL catalogued (episode-less) series that can be activated safely
+    in one call — non-anime, tmdb-keyed shows imported from Plex — fetching their
+    episodes and marking the ones Plex already has as downloaded. Anime and
+    plex-only entries are skipped and reported (a Plex tmdb id is not a MAL id, so
+    activate anime individually with activate_series + the jikan id). Runs
+    sequentially to respect provider rate limits; ``limit`` caps how many are
+    activated this call."""
+    return await app().bulk_activate_series(mark_downloaded=mark_downloaded, limit=limit)
+
+
+@tool
 async def plex_discover_libraries() -> list[dict]:
     """List Plex library sections with their on-disk paths — use this to pick the
     section names for configure_plex and the paths for configure_root_folder."""
