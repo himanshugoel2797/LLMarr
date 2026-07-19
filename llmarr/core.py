@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import sqlite3
 from typing import Optional
 
 from . import pathmap, selector
@@ -461,6 +462,89 @@ class App:
             folder_name=folder,
         )
         return self.db.get_movie(movie_id)
+
+    async def activate_series(
+        self,
+        series_id: int,
+        provider: Optional[str] = None,
+        provider_id: Optional[str] = None,
+        mark_downloaded: bool = True,
+    ) -> dict:
+        """Turn a catalogued series (e.g. from import_from_plex) into a fully
+        monitored one: fetch its episode list from a metadata provider, then mark
+        the episodes Plex already has as downloaded so only the genuinely-missing
+        ones are auto-grabbed."""
+        series = self.db.get_series(series_id)
+        if not series:
+            return {"error": f"No series with id {series_id}"}
+        provider = provider or series["provider"]
+        provider_id = provider_id or series["provider_id"]
+        if provider == "plex":
+            return {
+                "error": "This series was catalogued from Plex without a metadata id. "
+                "Pass provider and provider_id — e.g. provider='jikan' with the "
+                "MyAnimeList id, or provider='tmdb' with the TMDB id."
+            }
+
+        prov = self.provider(provider)
+        info = await prov.get_series(provider_id)
+        absolute = bool(getattr(prov, "absolute_numbering", False))
+        # Capture the Plex handle before we rewrite the series keys.
+        plex_key = series["provider_id"] if series["provider"] == "plex" else None
+        plex_title = series["title"]
+
+        try:
+            self.db.execute(
+                "UPDATE series SET provider=?, provider_id=?, title=?, year=?, overview=?, "
+                "status=?, poster=?, absolute_numbering=? WHERE id=?",
+                (info.provider, info.provider_id, info.title, info.year, info.overview,
+                 info.status, info.poster, 1 if absolute else 0, series_id),
+            )
+        except sqlite3.IntegrityError:
+            return {
+                "error": f"A different series already uses provider={info.provider} "
+                f"id={info.provider_id}. Remove it or activate that one instead."
+            }
+
+        for ep in info.episodes:
+            self.db.upsert_episode(
+                series_id, ep.season, ep.episode, title=ep.title, air_date=ep.air_date
+            )
+
+        marked = 0
+        if mark_downloaded and self.config.plex.url and self.config.plex.token:
+            try:
+                plex_eps = await asyncio.to_thread(
+                    self.plex().show_episodes, plex_key, plex_title, self.config.plex.tv_section
+                )
+            except Exception:  # noqa: BLE001
+                plex_eps = []
+            lib = self.db.list_episodes(series_id)
+            if absolute:
+                # Anime = one entry; Plex's file count is the absolute progress.
+                have = len(plex_eps)
+                for e in lib:
+                    if e["season"] == 1 and e["episode"] <= have and e["status"] == "missing":
+                        self.db.set_episode_status(e["id"], "downloaded")
+                        marked += 1
+            else:
+                haveset = set(plex_eps)
+                for e in lib:
+                    if (e["season"], e["episode"]) in haveset and e["status"] == "missing":
+                        self.db.set_episode_status(e["id"], "downloaded")
+                        marked += 1
+
+        lib = self.db.list_episodes(series_id)
+        return {
+            "series_id": series_id,
+            "title": info.title,
+            "provider": info.provider,
+            "provider_id": info.provider_id,
+            "absolute_numbering": absolute,
+            "episodes": len(lib),
+            "marked_downloaded": marked,
+            "still_missing": sum(1 for e in lib if e["status"] == "missing"),
+        }
 
     # -- import existing Plex library --------------------------------------- #
     async def import_from_plex(

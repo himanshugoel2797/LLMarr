@@ -281,11 +281,11 @@ for a single anime lookup, or make it the default with
 | Server / auth | `configure_server`, `get_auth_token`, `set_auth_token`, `rotate_auth_token`, `oauth_info` |
 | Path maps | `add_path_mapping`, `list_path_mappings`, `remove_path_mapping`, `translate_path` |
 | Diagnostics | `test_connections` |
-| Series | `search_series`, `add_series`, `list_series`, `get_series`, `list_episodes`, `set_monitored`, `remove_series` |
+| Series | `search_series`, `add_series`, `activate_series`, `list_series`, `get_series`, `list_episodes`, `set_series_monitored`, `remove_series` |
 | Movies | `search_movies`, `add_movie`, `list_movies`, `get_movie`, `set_movie_monitored`, `remove_movie`, `search_movie_releases`, `grab_movie` |
 | Releases | `search_releases`, `search_episode_releases`, `grab_release`, `grab_episode`, `grab_season` |
-| Downloads | `list_downloads`, `download_status`, `refresh_downloads`, `import_download`, `remove_download` |
-| Plex | `plex_login_start`, `plex_login_poll`, `plex_discover_libraries`, `import_plex_library`, `scan_plex` |
+| Downloads | `list_downloads`, `get_download`, `refresh_downloads`, `import_download`, `remove_download` |
+| Plex | `plex_login_start`, `plex_login_poll`, `plex_discover_libraries`, `import_plex_library`, `plex_scan` |
 | Root folders | `configure_root_folder`, `list_root_folders`, `remove_root_folder` |
 | RSS | `rss_status`, `rss_poll_now` |
 

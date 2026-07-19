@@ -595,10 +595,29 @@ def list_episodes(
 
 
 @mcp.tool()
-def set_monitored(series_id: int, monitored: bool, season: Optional[int] = None) -> dict:
-    """Monitor/unmonitor a whole series or a single season."""
+def set_series_monitored(series_id: int, monitored: bool, season: Optional[int] = None) -> dict:
+    """Monitor/unmonitor a whole series or a single season (mirrors
+    set_movie_monitored)."""
     app().db.set_monitored(series_id, monitored, season=season)
     return get_series(series_id)
+
+
+@mcp.tool()
+async def activate_series(
+    series_id: int,
+    provider: Optional[Literal["tmdb", "jikan"]] = None,
+    provider_id: Optional[str] = None,
+    mark_downloaded: bool = True,
+) -> dict:
+    """Turn a catalogued series (e.g. one registered by import_plex_library) into
+    a fully monitored one: fetch its episode list from a metadata provider and
+    mark the episodes already in Plex as downloaded, so only genuinely-missing
+    episodes get auto-grabbed. For anime pass provider='jikan' with the
+    MyAnimeList id (a Plex-catalogued show's TMDB id won't match jikan). Returns
+    episode / marked-downloaded / still-missing counts."""
+    return await app().activate_series(
+        series_id, provider=provider, provider_id=provider_id, mark_downloaded=mark_downloaded
+    )
 
 
 @mcp.tool()
@@ -837,8 +856,8 @@ def list_downloads(
 
 
 @mcp.tool()
-async def download_status(download_id: int) -> dict:
-    """Get live status from the download client for a recorded grab."""
+async def get_download(download_id: int) -> dict:
+    """Get one recorded grab plus live status from its download client."""
     import asyncio
 
     d = app().db.get_download(download_id)
@@ -990,7 +1009,7 @@ async def plex_discover_libraries() -> list[dict]:
 
 
 @mcp.tool()
-async def scan_plex(section: Optional[str] = None, path: Optional[str] = None) -> dict:
+async def plex_scan(section: Optional[str] = None, path: Optional[str] = None) -> dict:
     """Trigger a Plex library scan. ``path`` (in Plex's own namespace) narrows
     the scan to one directory."""
     import asyncio

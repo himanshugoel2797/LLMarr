@@ -163,6 +163,9 @@ class FakePlex:
     def catalog(self):
         return list(self._catalog)
 
+    def show_episodes(self, rating_key=None, title=None, section=None):
+        return list(getattr(self, "_show_episodes", []))
+
     def test(self):
         return {"ok": True, "friendly_name": "fake"}
 

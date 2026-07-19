@@ -50,6 +50,34 @@ class PlexNotifier:
             )
         return out
 
+    def show_episodes(self, rating_key=None, title=None, section=None) -> list[tuple]:
+        """Return (season, episode) pairs Plex already has for a show, found by
+        rating key or (fallback) by title within the TV section."""
+        show = None
+        if rating_key:
+            try:
+                show = self.server.fetchItem(int(rating_key))
+            except Exception:  # noqa: BLE001
+                show = None
+        if show is None and title:
+            try:
+                sec = self.server.library.section(section or self.cfg.tv_section)
+                matches = sec.search(title=title, libtype="show")
+                show = matches[0] if matches else None
+            except Exception:  # noqa: BLE001
+                show = None
+        if show is None:
+            return []
+        out = []
+        for ep in show.episodes():
+            s = getattr(ep, "seasonNumber", None)
+            if s is None:
+                s = getattr(ep, "parentIndex", None)
+            i = getattr(ep, "index", None)
+            if i is not None:
+                out.append((s, i))
+        return out
+
     def catalog(self) -> list[dict]:
         """Enumerate every show/movie already in the Plex libraries with whatever
         external ids Plex knows (tmdb/tvdb/imdb/anidb/…), for importing the

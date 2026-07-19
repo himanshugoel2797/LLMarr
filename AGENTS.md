@@ -129,9 +129,14 @@ in sync when adding a config step or provider/client type.
   config models set `validate_assignment=True` as a backstop. Search tools return
   `{query,count,releases}` envelopes; list_series/list_movies return compact rows
   (full=true for all fields, limit to cap). configure_* return the section they
-  set. Deferred (not yet done): full error-contract unification, tool renames
-  (set_movie_monitored→set_series_monitored symmetry, scan_plex→plex_scan,
-  download_status→get_download), auth-tool consolidation.
+  set. Renames done: set_monitored→set_series_monitored, scan_plex→plex_scan,
+  download_status→get_download. Deferred (not yet done): full error-contract
+  unification, auth-tool consolidation, config value-unsetting.
+- `activate_series(series_id, provider, provider_id)`: converts a catalogued
+  (plex-imported, no-episode) series into a monitored one — fetches episodes from
+  the provider, re-keys the series row to that provider/id, and marks episodes
+  Plex already has as downloaded (`PlexNotifier.show_episodes`; absolute anime =
+  Plex file count → mark eps 1..N, standard = match (season,episode)).
 - Plex auth: either a manual token (`configure_plex`) or browser login
   (`plexauth.py` PIN flow → `plex_login_start`/`plex_login_poll`, persistent
   `plex.client_id`, pending pin id in the `kv` table). `plex_discover_libraries`
