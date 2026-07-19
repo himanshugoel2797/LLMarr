@@ -309,20 +309,33 @@ def configure_rss(
 def configure_server(
     single_host: Optional[bool] = None,
     require_auth: Optional[bool] = None,
+    allowed_hosts: Optional[list[str]] = None,
+    allowed_origins: Optional[list[str]] = None,
 ) -> dict:
     """Set deployment mode. ``single_host=true`` (default) means LLMarr,
     qBittorrent and Plex share the same filesystem paths, so no path mappings are
     needed; set it false for a split-container setup and define path mappings.
-    ``require_auth`` toggles bearer-token auth on the HTTP transport (takes effect
-    on restart)."""
+    ``require_auth`` toggles bearer-token auth on the HTTP transport.
+    ``allowed_hosts`` lists external hostnames to trust for the Host-header check
+    when running behind a tunnel/proxy (empty disables the check). All take effect
+    on the next HTTP server restart."""
     def _m(c):
         if single_host is not None:
             c.single_host = single_host
         if require_auth is not None:
             c.server.require_auth = require_auth
+        if allowed_hosts is not None:
+            c.server.allowed_hosts = allowed_hosts
+        if allowed_origins is not None:
+            c.server.allowed_origins = allowed_origins
     app().store.mutate(_m)
     c = app().config
-    return {"single_host": c.single_host, "require_auth": c.server.require_auth}
+    return {
+        "single_host": c.single_host,
+        "require_auth": c.server.require_auth,
+        "allowed_hosts": c.server.allowed_hosts,
+        "allowed_origins": c.server.allowed_origins,
+    }
 
 
 @mcp.tool()

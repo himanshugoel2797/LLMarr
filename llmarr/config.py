@@ -149,6 +149,13 @@ class ServerConfig(BaseModel):
 
     auth_token: Optional[str] = None
     require_auth: bool = True
+    # MCP's DNS-rebinding protection only trusts localhost by default, which
+    # rejects access through a tunnel/reverse proxy with "Invalid Host header".
+    # List the external hostnames to trust (e.g. "arr.example.com"). Left empty,
+    # the protection is disabled — fine for a headless service whose real
+    # boundary is the bearer token behind Cloudflare, not the Host header.
+    allowed_hosts: list[str] = Field(default_factory=list)
+    allowed_origins: list[str] = Field(default_factory=list)
 
 
 class Config(BaseModel):

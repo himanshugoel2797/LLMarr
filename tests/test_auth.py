@@ -64,7 +64,13 @@ def wired(app, monkeypatch):
 
 def test_configure_server_toggles(wired):
     out = server.configure_server(single_host=False, require_auth=False)
-    assert out == {"single_host": False, "require_auth": False}
+    assert out["single_host"] is False and out["require_auth"] is False
+
+
+def test_configure_server_allowed_hosts(wired):
+    out = server.configure_server(allowed_hosts=["arr.example.com"])
+    assert out["allowed_hosts"] == ["arr.example.com"]
+    assert wired.config.server.allowed_hosts == ["arr.example.com"]
 
 
 def test_auth_token_tools(wired):
