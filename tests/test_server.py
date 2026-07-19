@@ -88,6 +88,34 @@ def test_configure_clears_with_empty_string(wired):
     assert wired.config.prowlarr.api_key == "k"  # untouched (None = leave)
 
 
+def test_configure_metadata_empty_string_resets_to_default(wired):
+    server.configure_metadata(language="de-DE", anime_api_url="http://mirror/v4")
+    assert wired.config.metadata.language == "de-DE"
+    server.configure_metadata(language="", anime_api_url="")  # reset to defaults
+    assert wired.config.metadata.language == "en-US"
+    assert wired.config.metadata.anime_api_url == "https://api.tenrai.org/v1"
+
+
+def test_configure_download_client_category_reset(wired):
+    server.configure_download_client("qbit", url="http://qb", category="movies")
+    assert wired.config.download_clients["qbit"].category == "movies"
+    server.configure_download_client("qbit", category="")  # reset to default
+    assert wired.config.download_clients["qbit"].category == "llmarr"
+
+
+def test_remove_download_client_reassigns_default(wired):
+    server.configure_download_client("a", url="http://a")
+    server.configure_download_client("b", url="http://b")
+    assert wired.config.default_download_client == "a"  # first stays default
+    out = server.remove_download_client("a")
+    # only "b" remains -> becomes default
+    assert out["download_clients"] == ["b"]
+    assert wired.config.default_download_client == "b"
+    server.remove_download_client("b")
+    assert wired.config.default_download_client is None
+    assert "error" in server.remove_download_client("nope")
+
+
 def test_auth_token_consolidated(wired):
     assert server.auth_token("get")["configured"] is False
     server.auth_token("set", "tok")

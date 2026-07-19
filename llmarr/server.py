@@ -134,6 +134,19 @@ def _set_opt(obj, attr: str, value) -> None:
         setattr(obj, attr, None if value == "" else value)
 
 
+def _set_or_default(obj, attr: str, value) -> None:
+    """Partial-update helper for NON-optional fields (which can't hold ``None``):
+    ``None`` leaves the value unchanged, an empty string resets it to the model's
+    declared default, anything else sets it. Keeps "" consistently meaning
+    "clear" across tools without letting a field become an invalid empty value."""
+    if value is None:
+        return
+    if value == "":
+        setattr(obj, attr, type(obj).model_fields[attr].default)
+    else:
+        setattr(obj, attr, value)
+
+
 # --------------------------------------------------------------------------- #
 # Configuration
 # --------------------------------------------------------------------------- #
@@ -176,15 +189,14 @@ def configure_metadata(
     """Set the default metadata provider and its settings. ``provider`` is
     ``tmdb`` (TV+movies, needs ``tmdb_api_key``) or ``jikan`` (anime, no key).
     ``anime_api_url`` overrides the Jikan-compatible anime API base URL (defaults
-    to Tenrai, api.tenrai.org/v1). Pass "" for tmdb_api_key to clear it."""
+    to Tenrai, api.tenrai.org/v1). Pass "" for tmdb_api_key to clear it; pass "" for
+    language or anime_api_url to reset them to their defaults."""
     def _m(c):
         if provider is not None:
             c.metadata.provider = provider
         _set_opt(c.metadata, "tmdb_api_key", tmdb_api_key)
-        if language:
-            c.metadata.language = language
-        if anime_api_url:
-            c.metadata.anime_api_url = anime_api_url
+        _set_or_default(c.metadata, "language", language)
+        _set_or_default(c.metadata, "anime_api_url", anime_api_url)
     app().store.mutate(_m)
     return app().store.redacted()["metadata"]
 
@@ -220,7 +232,8 @@ def configure_download_client(
     """Add or update a download client. ``save_path`` is the download directory
     as the *client* sees it; use path mappings to translate for Plex. The first
     client added becomes the default automatically; pass ``make_default=true`` to
-    force an existing setup to switch."""
+    force an existing setup to switch. Pass "" for category to reset it to the
+    default; "" for url/username/password/save_path to clear them."""
     def _m(c):
         existing = c.download_clients.get(name)
         cfg = existing or DownloadClientConfig(type=type)
@@ -228,14 +241,36 @@ def configure_download_client(
         _set_opt(cfg, "url", url)
         _set_opt(cfg, "username", username)
         _set_opt(cfg, "password", password)
-        if category:
-            cfg.category = category
+        _set_or_default(cfg, "category", category)
         _set_opt(cfg, "save_path", save_path)
         c.download_clients[name] = cfg
         if make_default or c.default_download_client is None:
             c.default_download_client = name
     app().store.mutate(_m)
     return app().store.redacted()["download_clients"][name]
+
+
+@tool
+def remove_download_client(name: str) -> dict:
+    """Remove a configured download client by name. If it was the default, the
+    default is cleared (or reassigned to the sole remaining client). Returns the
+    remaining clients and the current default."""
+    if name not in app().config.download_clients:
+        return {"error": f"No download client named {name}"}
+
+    def _m(c):
+        c.download_clients.pop(name, None)
+        if c.default_download_client == name:
+            # Reassign to the only remaining client, else clear.
+            c.default_download_client = (
+                next(iter(c.download_clients)) if len(c.download_clients) == 1 else None
+            )
+    app().store.mutate(_m)
+    return {
+        "removed": name,
+        "download_clients": list(app().config.download_clients),
+        "default_download_client": app().config.default_download_client,
+    }
 
 
 @tool
