@@ -92,6 +92,41 @@ async def test_rss_poll_anime_release_ignored_for_standard_series(configured, fa
     assert result["grabbed"] == []  # absolute matching not applied to standard TV
 
 
+async def test_add_series_specials_unmonitored_by_default(app, fakes, monkeypatch):
+    info = SeriesInfo(
+        provider="tmdb", provider_id="1", title="Show", seasons=[0, 1],
+        episodes=[EpisodeInfo(season=0, episode=1, title="Special"),
+                  EpisodeInfo(season=1, episode=1, title="Pilot")],
+    )
+    monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](series_info=info))
+    r = await app.add_series("1")  # monitor all regular seasons
+    mon = {(e["season"], e["episode"]): e["monitored"] for e in app.db.list_episodes(r["id"])}
+    assert mon[(1, 1)] == 1 and mon[(0, 1)] == 0  # special off by default
+
+
+async def test_add_series_specials_opt_in(app, fakes, monkeypatch):
+    info = SeriesInfo(
+        provider="tmdb", provider_id="1", title="Show", seasons=[0, 1],
+        episodes=[EpisodeInfo(season=0, episode=1), EpisodeInfo(season=1, episode=1)],
+    )
+    monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](series_info=info))
+    r = await app.add_series("1", seasons=[0, 1])  # explicitly include specials
+    mon = {(e["season"], e["episode"]): e["monitored"] for e in app.db.list_episodes(r["id"])}
+    assert mon[(0, 1)] == 1 and mon[(1, 1)] == 1
+
+
+async def test_download_queue_reports_progress(configured, fakes, monkeypatch):
+    app = configured
+    monkeypatch.setattr(
+        core, "get_client", lambda cfg: fakes["DownloadClient"](complete=False)
+    )
+    app.db.add_download(title="Show.S01E01", torrent_hash="h", client="qbit", status="downloading")
+    app.db.add_download(title="old", torrent_hash="h2", client="qbit", status="imported")  # excluded
+    q = await app.download_queue()
+    assert len(q) == 1
+    assert q[0]["title"] == "Show.S01E01" and q[0]["progress_pct"] == 30.0
+
+
 async def test_readd_series_preserves_monitored_flags(app, fakes, monkeypatch):
     info = SeriesInfo(
         provider="tmdb", provider_id="1", title="Show", seasons=[1],

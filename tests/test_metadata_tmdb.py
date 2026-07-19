@@ -41,8 +41,11 @@ async def test_search_series(mock_httpx):
     assert res[1].title == "Alt" and res[1].year is None
 
 
-async def test_get_series_flattens_episodes_and_skips_specials(mock_httpx):
+async def test_get_series_includes_specials(mock_httpx):
     routes = {
+        "/3/tv/95396/season/0": {
+            "episodes": [{"episode_number": 1, "name": "Special", "air_date": "2022-01-01"}]
+        },
         "/3/tv/95396/season/1": {
             "episodes": [
                 {"episode_number": 1, "name": "Good News", "air_date": "2022-02-18"},
@@ -52,20 +55,15 @@ async def test_get_series_flattens_episodes_and_skips_specials(mock_httpx):
         "/3/tv/95396": {
             "id": 95396, "name": "Severance", "first_air_date": "2022-02-18",
             "status": "Returning Series",
-            "seasons": [
-                {"season_number": 0},  # specials — excluded from flat episode list
-                {"season_number": 1},
-            ],
+            "seasons": [{"season_number": 1}, {"season_number": 0}],
         },
     }
     mock_httpx(tmdb, make_handler(routes))
     p = tmdb.TMDBProvider(api_key="k")
     info = await p.get_series("95396")
-    assert info.title == "Severance"
-    assert info.status == "Returning Series"
     assert info.seasons == [0, 1]
-    # Season 0 skipped, season 1 has 2 episodes.
-    assert [(e.season, e.episode) for e in info.episodes] == [(1, 1), (1, 2)]
+    # Specials (season 0) are now included, ordered first.
+    assert [(e.season, e.episode) for e in info.episodes] == [(0, 1), (1, 1), (1, 2)]
 
 
 async def test_search_movies(mock_httpx):

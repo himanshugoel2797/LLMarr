@@ -134,6 +134,11 @@ class QBittorrentClient(DownloadClient):
             content_path=getattr(t, "content_path", None),
             category=getattr(t, "category", None),
             completed=(t.state in _COMPLETE_STATES) or float(t.progress) >= 1.0,
+            dl_speed=int(getattr(t, "dlspeed", 0) or 0),
+            eta=getattr(t, "eta", None),
+            num_seeds=getattr(t, "num_seeds", None),
+            size=int(getattr(t, "size", 0) or 0),
+            ratio=getattr(t, "ratio", None),
         )
 
     def status(self, torrent_hash: str) -> Optional[TorrentStatus]:

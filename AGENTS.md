@@ -90,6 +90,16 @@ in sync when adding a config step or provider/client type.
   directly in tests after `monkeypatch.setattr(server.state, "app", app)`.
 - The importer is tested against **real files + real hardlinks** (inode checks).
 
+## Specials & download progress
+
+- Specials = season 0 (OVAs/specials). TMDB `get_series` fetches season 0 (was
+  skipped); `add_series` leaves specials UNMONITORED by default — opt in with
+  `seasons=[0, …]`. Importer already names them `Season 00/`. Anime OVAs are
+  usually separate MAL entries (add them individually via jikan).
+- Progress/cancel: `download_queue` (live %, speed, ETA, seeds for in-flight
+  grabs), `get_download` (one), `remove_download(delete_files=)` cancels.
+  `TorrentStatus` carries dl_speed/eta/num_seeds/size/ratio.
+
 ## Gotchas
 
 - `db.upsert_episode` / `upsert_movie` deliberately do NOT overwrite

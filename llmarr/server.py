@@ -890,8 +890,18 @@ def list_downloads(
 
 
 @tool
+async def download_queue() -> dict:
+    """Live progress for all in-flight grabs — name, %, download speed, ETA and
+    seed count for each download still in a client (not yet imported/removed).
+    Use get_download for one download, remove_download to cancel one."""
+    items = await app().download_queue()
+    return {"count": len(items), "downloads": items}
+
+
+@tool
 async def get_download(download_id: int) -> dict:
-    """Get one recorded grab plus live status from its download client."""
+    """Get one recorded grab plus live status (progress, speed, ETA, seeds) from
+    its download client."""
     import asyncio
 
     d = app().db.get_download(download_id)
@@ -939,7 +949,9 @@ async def import_download(download_id: int, notify: bool = True) -> dict:
 
 @tool
 async def remove_download(download_id: int, delete_files: bool = False) -> dict:
-    """Remove a grab from the download client and mark it removed."""
+    """Cancel/remove a grab: delete the torrent from the download client and mark
+    it removed in LLMarr. ``delete_files=true`` also deletes the downloaded data
+    (use this to fully cancel an in-progress download); false keeps any files."""
     import asyncio
 
     d = app().db.get_download(download_id)

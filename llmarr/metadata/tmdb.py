@@ -65,22 +65,25 @@ class TMDBProvider(MetadataProvider):
             show = await self._get(client, f"/tv/{provider_id}")
             date = show.get("first_air_date") or ""
             year = int(date[:4]) if date[:4].isdigit() else None
-            season_numbers = [
+            # Season 0 is specials/OVAs — include it (callers monitor it or not);
+            # regular seasons come after so the flat list stays ordered.
+            season_numbers = sorted(
                 s["season_number"]
                 for s in show.get("seasons", [])
-                # Skip season 0 (specials) by default in the flat listing but
-                # still expose it in the seasons list.
                 if s.get("season_number") is not None
-            ]
+            )
 
             episodes: list[EpisodeInfo] = []
             for season_number in season_numbers:
-                if season_number == 0:
-                    continue
-                season = await self._get(
-                    client, f"/tv/{provider_id}/season/{season_number}"
-                )
+                try:
+                    season = await self._get(
+                        client, f"/tv/{provider_id}/season/{season_number}"
+                    )
+                except httpx.HTTPError:
+                    continue  # a missing season shouldn't sink the whole fetch
                 for ep in season.get("episodes", []):
+                    if ep.get("episode_number") is None:
+                        continue
                     episodes.append(
                         EpisodeInfo(
                             season=season_number,

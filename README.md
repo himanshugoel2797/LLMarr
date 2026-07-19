@@ -284,7 +284,7 @@ for a single anime lookup, or make it the default with
 | Series | `search_series`, `add_series`, `activate_series`, `list_series`, `get_series`, `list_episodes`, `set_series_monitored`, `remove_series` |
 | Movies | `search_movies`, `add_movie`, `list_movies`, `get_movie`, `set_movie_monitored`, `remove_movie`, `search_movie_releases`, `grab_movie` |
 | Releases | `search_releases`, `search_episode_releases`, `grab_release`, `grab_episode`, `grab_season` |
-| Downloads | `list_downloads`, `get_download`, `refresh_downloads`, `import_download`, `remove_download` |
+| Downloads | `list_downloads`, `download_queue`, `get_download`, `refresh_downloads`, `import_download`, `remove_download` (cancel) |
 | Plex | `plex_login_start`, `plex_login_poll`, `plex_discover_libraries`, `import_plex_library`, `plex_scan` |
 | Root folders | `configure_root_folder`, `list_root_folders`, `remove_root_folder` |
 | RSS | `rss_status`, `rss_poll_now` |

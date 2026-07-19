@@ -17,6 +17,11 @@ class TorrentStatus(BaseModel):
     content_path: Optional[str] = None
     category: Optional[str] = None
     completed: bool = False
+    dl_speed: int = 0  # bytes/sec
+    eta: Optional[int] = None  # seconds (client may report a sentinel for "infinite")
+    num_seeds: Optional[int] = None
+    size: Optional[int] = None  # bytes
+    ratio: Optional[float] = None
 
 
 class DownloadClient(ABC):

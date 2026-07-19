@@ -120,7 +120,11 @@ class App:
             )
             if (ep.season, ep.episode) in existing:
                 continue
-            ep_monitored = monitored and (seasons is None or ep.season in seasons)
+            if ep.season == 0:
+                # Specials are off by default; opt in with seasons=[0, …].
+                ep_monitored = monitored and seasons is not None and 0 in seasons
+            else:
+                ep_monitored = monitored and (seasons is None or ep.season in seasons)
             row = self.db.query_one(
                 "SELECT id FROM episodes WHERE series_id=? AND season=? AND episode=?",
                 (series_id, ep.season, ep.episode),
@@ -296,6 +300,38 @@ class App:
                     {"download_id": d["id"], "state": "downloading", "progress": st.progress}
                 )
         return updates
+
+    async def download_queue(self) -> list[dict]:
+        """Live progress for every grab still in a download client (not yet
+        imported/removed) — name, %, speed, ETA, seeds."""
+        out = []
+        for d in self.db.list_downloads():
+            if not d["torrent_hash"] or d["status"] in ("imported", "removed", "failed"):
+                continue
+            try:
+                st = await asyncio.to_thread(
+                    self.download_client(d["client"]).status, d["torrent_hash"]
+                )
+            except Exception as exc:  # noqa: BLE001
+                out.append({"download_id": d["id"], "title": d["title"], "error": str(exc)})
+                continue
+            if not st:
+                continue
+            eta = st.eta if (st.eta is not None and 0 <= st.eta < 8640000) else None
+            out.append({
+                "download_id": d["id"],
+                "title": d["title"][:90],
+                "status": d["status"],
+                "state": st.state,
+                "progress_pct": round(st.progress * 100, 1),
+                "dl_speed_kbps": round(st.dl_speed / 1024, 1) if st.dl_speed else 0,
+                "eta_seconds": eta,
+                "seeds": st.num_seeds,
+                "size_mb": round(st.size / 1048576, 1) if st.size else None,
+                "series_id": d["series_id"],
+                "movie_id": d["movie_id"],
+            })
+        return out
 
     async def _import_and_notify(
         self, download: dict, content_path, section: str, result: dict, notify: bool
