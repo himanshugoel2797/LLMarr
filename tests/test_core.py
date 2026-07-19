@@ -475,6 +475,35 @@ async def test_grab_movie_marks_movie(configured, fakes, monkeypatch):
     assert app.db.get_download(res["download_id"])["movie_id"] == mid
 
 
+async def test_grab_refused_when_insufficient_space(configured, fakes, monkeypatch, tmp_path):
+    app = configured
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
+    app.store.mutate(lambda c: setattr(c.importer, "min_free_space_mb", 10 ** 12))
+    sid = app.db.upsert_series(provider="tmdb", provider_id="1", title="Show")
+    e = app.db.upsert_episode(sid, 1, 1)
+    with pytest.raises(ValueError, match="free space"):
+        await app.grab(
+            "magnet:?xt=urn:btih:" + "a" * 40, title="Show.S01E01",
+            series_id=sid, episode_id=e, size=2_000_000_000,
+            save_path=str(tmp_path),
+        )
+    # nothing recorded / episode untouched
+    assert app.db.list_downloads() == []
+    assert app.db.get_episode(e)["status"] == "missing"
+
+
+async def test_grab_space_check_skipped_when_size_unknown(configured, fakes, monkeypatch, tmp_path):
+    app = configured
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
+    app.store.mutate(lambda c: setattr(c.importer, "min_free_space_mb", 10 ** 12))
+    sid = app.db.upsert_series(provider="tmdb", provider_id="1", title="Show")
+    e = app.db.upsert_episode(sid, 1, 1)
+    # size=None -> can't check, so the grab proceeds.
+    res = await app.grab("magnet:?xt=urn:btih:" + "a" * 40, title="Show.S01E01",
+                         series_id=sid, episode_id=e, save_path=str(tmp_path))
+    assert res["download_id"]
+
+
 async def test_client_config_error_when_ambiguous(app):
     def setup(c):
         c.download_clients["a"] = DownloadClientConfig(url="http://a")

@@ -56,6 +56,21 @@ def _sanitize(name: str) -> str:
     return re.sub(r'[\\/:*?"<>|]+', "", name).strip()
 
 
+def free_space_mb(path: str) -> Optional[float]:
+    """Free space in MB on the filesystem containing ``path``, walking up to the
+    nearest existing parent directory. ``None`` if it can't be determined (so
+    callers treat 'unknown' as 'don't block')."""
+    p = Path(path)
+    while not p.exists():
+        if p.parent == p:
+            return None
+        p = p.parent
+    try:
+        return shutil.disk_usage(str(p)).free / (1024 * 1024)
+    except OSError:
+        return None
+
+
 class Importer:
     def __init__(self, app):
         self.app = app
@@ -103,6 +118,26 @@ class Importer:
         return out
 
     # -- linking ------------------------------------------------------------ #
+    def _check_space(self, src: Path, dst: Path) -> None:
+        """Raise OSError if copying ``src`` into ``dst.parent`` would leave the
+        target filesystem below the configured free-space floor. Only relevant to
+        real byte copies (hardlinks consume no space)."""
+        floor = self.cfg.min_free_space_mb
+        if floor <= 0:
+            return
+        free = free_space_mb(str(dst.parent))
+        if free is None:
+            return
+        try:
+            need = src.stat().st_size / (1024 * 1024) + floor
+        except OSError:
+            return
+        if free < need:
+            raise OSError(
+                f"insufficient free space at {dst.parent}: {free:.0f}MB free, "
+                f"need >= {need:.0f}MB (min_free_space_mb={floor})"
+            )
+
     def _place(self, src: Path, dst: Path) -> str:
         dst.parent.mkdir(parents=True, exist_ok=True)
         if dst.exists():
@@ -112,6 +147,7 @@ class Importer:
             shutil.move(str(src), str(dst))
             return "move"
         if mode == "copy":
+            self._check_space(src, dst)
             shutil.copy2(str(src), str(dst))
             return "copy"
         # hardlink with graceful fallback to copy across filesystems
@@ -120,6 +156,7 @@ class Importer:
             return "hardlink"
         except OSError as exc:
             if exc.errno in (errno.EXDEV, errno.EPERM, errno.EMLINK):
+                self._check_space(src, dst)
                 shutil.copy2(str(src), str(dst))
                 return "copy"
             raise

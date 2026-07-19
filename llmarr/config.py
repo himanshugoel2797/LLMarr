@@ -151,6 +151,9 @@ class ImportConfig(BaseModel):
     rename: bool = True
     work_context: str = "local"
     min_video_mb: int = 50  # skip samples / stray small files
+    # Refuse a grab (when the size is known) or an import copy that would leave the
+    # target filesystem with less than this much free space (MB). 0 = disabled.
+    min_free_space_mb: int = 0
     video_extensions: list[str] = Field(
         default_factory=lambda: [
             ".mkv", ".mp4", ".avi", ".m4v", ".ts", ".mov", ".wmv", ".mpg", ".mpeg", ".flv",

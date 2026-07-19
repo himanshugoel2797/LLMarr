@@ -413,11 +413,14 @@ def configure_import(
     rename: Optional[bool] = None,
     work_context: Optional[str] = None,
     min_video_mb: Optional[int] = None,
+    min_free_space_mb: Optional[int] = None,
 ) -> dict:
     """Configure how completed downloads are imported into the Plex library.
     ``mode`` is hardlink|copy|move; ``work_context`` is the path context LLMarr
     itself can read/write (where linking happens — must be reachable and on the
-    same filesystem as the library root for hardlinks)."""
+    same filesystem as the library root for hardlinks). ``min_free_space_mb``
+    refuses a grab (size known) or import copy that would drop free space on the
+    target filesystem below that floor (0 = disabled)."""
     def _m(c):
         i = c.importer
         if enabled is not None:
@@ -430,6 +433,8 @@ def configure_import(
             i.work_context = work_context
         if min_video_mb is not None:
             i.min_video_mb = min_video_mb
+        if min_free_space_mb is not None:
+            i.min_free_space_mb = min_free_space_mb
     app().store.mutate(_m)
     return app().config.importer.model_dump()
 

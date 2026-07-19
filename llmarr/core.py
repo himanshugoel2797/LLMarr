@@ -380,6 +380,39 @@ class App:
                 reset += 1
         return {"download_id": download_id, "status": "failed", "reset_to_missing": reset}
 
+    # -- disk-space guard (G10) --------------------------------------------- #
+    def _check_grab_space(self, cfg: DownloadClientConfig, save_path, size) -> None:
+        """Refuse a grab that would leave the download filesystem below the
+        configured free-space floor. Only fires when the floor is set, the release
+        size is known, and the download dir is reachable in the work context
+        (single-host, or an explicit mapping); otherwise it silently allows the
+        grab rather than guessing."""
+        from . import importer as _importer
+
+        floor = self.config.importer.min_free_space_mb
+        if floor <= 0 or not size:
+            return
+        target = save_path or cfg.save_path
+        if not target:
+            return
+        try:
+            local = self._to_context(target, "qbittorrent", self.config.importer.work_context)
+        except Exception:  # noqa: BLE001 - unmapped path: don't block, just skip
+            return
+        if not local:
+            return
+        free = _importer.free_space_mb(local)
+        if free is None:
+            return
+        need = size / (1024 * 1024) + floor
+        if free < need:
+            raise ValueError(
+                f"Insufficient free space to grab: {free:.0f}MB free at {local}, "
+                f"need >= {need:.0f}MB (release {size / (1024 * 1024):.0f}MB + "
+                f"min_free_space_mb {floor}). Free up space or lower "
+                f"importer.min_free_space_mb."
+            )
+
     # -- grabbing ----------------------------------------------------------- #
     async def grab(
         self,
@@ -398,6 +431,8 @@ class App:
         name, cfg = self._client_config(client_name)
         client = get_client(cfg)
         category = category or cfg.category
+
+        self._check_grab_space(cfg, save_path, size)
 
         torrent_hash = await asyncio.to_thread(
             client.add, grab_url, category, save_path

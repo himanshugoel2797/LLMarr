@@ -270,6 +270,37 @@ def test_movie_pack_imports_all_features(library):
     assert app.db.get_movie(mid)["movie_status"] == "downloaded"
 
 
+def test_min_free_space_blocks_copy(library):
+    app, dl, lib = library
+    # copy mode + an impossibly high free-space floor -> the copy is refused.
+    app.store.mutate(lambda c: (setattr(c.importer, "mode", "copy"),
+                                setattr(c.importer, "min_free_space_mb", 10 ** 12)))
+    sid = app.db.upsert_series(
+        provider="tmdb", provider_id="1", title="Show", root_folder="tv", folder_name="Show"
+    )
+    e = app.db.upsert_episode(sid, 1, 1)
+    write(dl / "Show.S01E01.mkv")
+    d = {"id": 1, "series_id": sid, "episode_id": e, "movie_id": None}
+    res = app.importer.import_download(d, "/downloads/Show.S01E01.mkv")
+    assert not res.imported and res.errors
+    assert "free space" in res.errors[0]
+    assert app.db.get_episode(e)["status"] == "missing"  # not marked
+
+
+def test_min_free_space_disabled_by_default(library):
+    app, dl, lib = library
+    app.store.mutate(lambda c: setattr(c.importer, "mode", "copy"))
+    assert app.config.importer.min_free_space_mb == 0  # default off
+    sid = app.db.upsert_series(
+        provider="tmdb", provider_id="1", title="Show", root_folder="tv", folder_name="Show"
+    )
+    e = app.db.upsert_episode(sid, 1, 1)
+    write(dl / "Show.S01E01.mkv")
+    d = {"id": 1, "series_id": sid, "episode_id": e, "movie_id": None}
+    res = app.importer.import_download(d, "/downloads/Show.S01E01.mkv")
+    assert res.ok  # no space check when floor is 0
+
+
 def test_missing_video_files_skipped(library):
     app, dl, lib = library
     sid = app.db.upsert_series(

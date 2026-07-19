@@ -193,6 +193,12 @@ in sync when adding a config step or provider/client type.
   `plex.client_id`, pending pin id in the `kv` table). `plex_discover_libraries`
   lists sections + on-disk paths for choosing root folders. When Plex runs
   natively (not a container) local == plex namespace, so no local↔plex mapping.
+- Disk-space guard (G10): `importer.min_free_space_mb` (0 = off) refuses a grab
+  (`App._check_grab_space`, when the size is known and the download dir is
+  reachable in the work context) and an import byte-copy (`Importer._check_space`,
+  guarding copy mode and the hardlink→copy fallback; hardlinks are never blocked)
+  that would leave the target filesystem below the floor. `importer.free_space_mb`
+  is the shared `shutil.disk_usage` helper.
 - Only qBittorrent, Prowlarr, Plex are implemented for their layers. The ABCs
   exist so new providers/clients slot in without touching `core`.
 
