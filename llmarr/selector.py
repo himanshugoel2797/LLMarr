@@ -21,7 +21,7 @@ def _title_has(title: str, term: str) -> bool:
 
 def _has_word(title: str, term: str) -> bool:
     """Whole-token match so a required/ignored term like 'ts' or 'cam' doesn't
-    fire on 'Yellowjackets' / 'Camelot'."""
+    fire on 'Catskill' / 'Camloch'."""
     return re.search(rf"(?<![a-z0-9]){re.escape(term.lower())}(?![a-z0-9])", title.lower()) is not None
 
 

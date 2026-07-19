@@ -25,7 +25,7 @@ async def test_search_series(mock_httpx):
     routes = {
         "/3/search/tv": {
             "results": [
-                {"id": 95396, "name": "Severance", "first_air_date": "2022-02-18",
+                {"id": 95396, "name": "Meridian", "first_air_date": "2022-02-18",
                  "overview": "o", "poster_path": "/p.jpg"},
                 {"id": 1, "original_name": "Alt", "first_air_date": ""},
             ]
@@ -33,8 +33,8 @@ async def test_search_series(mock_httpx):
     }
     mock_httpx(tmdb, make_handler(routes))
     p = tmdb.TMDBProvider(api_key="k")
-    res = await p.search_series("severance")
-    assert res[0].title == "Severance"
+    res = await p.search_series("meridian")
+    assert res[0].title == "Meridian"
     assert res[0].year == 2022
     assert res[0].provider_id == "95396"
     assert res[0].poster.endswith("/p.jpg")
@@ -53,7 +53,7 @@ async def test_get_series_includes_specials(mock_httpx):
             ]
         },
         "/3/tv/95396": {
-            "id": 95396, "name": "Severance", "first_air_date": "2022-02-18",
+            "id": 95396, "name": "Meridian", "first_air_date": "2022-02-18",
             "status": "Returning Series",
             "seasons": [{"season_number": 1}, {"season_number": 0}],
         },
@@ -70,21 +70,21 @@ async def test_search_movies(mock_httpx):
     routes = {
         "/3/search/movie": {
             "results": [
-                {"id": 438631, "title": "Dune", "release_date": "2021-10-22", "overview": "o"},
+                {"id": 438631, "title": "Nebula", "release_date": "2021-10-22", "overview": "o"},
             ]
         }
     }
     mock_httpx(tmdb, make_handler(routes))
     p = tmdb.TMDBProvider(api_key="k")
-    res = await p.search_movies("dune")
-    assert res[0].title == "Dune" and res[0].year == 2021
+    res = await p.search_movies("nebula")
+    assert res[0].title == "Nebula" and res[0].year == 2021
     assert res[0].provider_id == "438631"
 
 
 async def test_get_movie(mock_httpx):
-    routes = {"/3/movie/438631": {"id": 438631, "title": "Dune", "release_date": "2021-10-22",
+    routes = {"/3/movie/438631": {"id": 438631, "title": "Nebula", "release_date": "2021-10-22",
                                    "status": "Released"}}
     mock_httpx(tmdb, make_handler(routes))
     p = tmdb.TMDBProvider(api_key="k")
     info = await p.get_movie("438631")
-    assert info.title == "Dune" and info.year == 2021 and info.status == "Released"
+    assert info.title == "Nebula" and info.year == 2021 and info.status == "Released"

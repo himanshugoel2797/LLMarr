@@ -31,8 +31,8 @@ SEARCH = {
         "data": [
             {
                 "mal_id": 52991,
-                "title": "Sousou no Frieren",
-                "title_english": "Frieren: Beyond Journey's End",
+                "title": "Aetheria Gaiden",
+                "title_english": "Aether Chronicles",
                 "type": "TV",
                 "episodes": 28,
                 "synopsis": "…",
@@ -46,8 +46,8 @@ DETAIL = {
     "/v1/anime/52991": {
         "data": {
             "mal_id": 52991,
-            "title": "Sousou no Frieren",
-            "title_english": "Frieren: Beyond Journey's End",
+            "title": "Aetheria Gaiden",
+            "title_english": "Aether Chronicles",
             "type": "TV",
             "episodes": 28,
             "status": "Finished Airing",
@@ -81,7 +81,7 @@ async def test_custom_base_url_is_used(mock_httpx):
 
     mock_httpx(jikan, handler)
     p = jikan.JikanProvider(base_url="https://api.jikan.moe/v4")
-    await p.search_series("frieren")
+    await p.search_series("aethering")
     assert seen["host"] == "api.jikan.moe"
     assert seen["path"] == "/v4/anime"
 
@@ -89,10 +89,10 @@ async def test_custom_base_url_is_used(mock_httpx):
 async def test_search_series_prefers_english_title(mock_httpx):
     mock_httpx(jikan, handler_for(SEARCH))
     p = jikan.JikanProvider()
-    res = await p.search_series("frieren")
+    res = await p.search_series("aethering")
     assert res[0].provider == "jikan"
     assert res[0].provider_id == "52991"
-    assert res[0].title == "Frieren: Beyond Journey's End"
+    assert res[0].title == "Aether Chronicles"
     assert res[0].year == 2023
 
 
@@ -141,7 +141,7 @@ async def test_retries_on_504_then_succeeds(mock_httpx, no_sleep):
 
     mock_httpx(jikan, handler)
     p = jikan.JikanProvider()
-    res = await p.search_series("frieren")
+    res = await p.search_series("aethering")
     assert state["n"] == 3  # two 504s then success
     assert res[0].provider_id == "52991"
 

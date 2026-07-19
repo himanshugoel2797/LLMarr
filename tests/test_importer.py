@@ -43,20 +43,20 @@ def write(path: Path, size=1000):
 def test_single_episode_hardlink(library):
     app, dl, lib = library
     sid = app.db.upsert_series(
-        provider="tmdb", provider_id="1", title="Severance", year=2022,
-        root_folder="tv", folder_name="Severance (2022)",
+        provider="tmdb", provider_id="1", title="Meridian", year=2022,
+        root_folder="tv", folder_name="Meridian (2022)",
     )
     e = app.db.upsert_episode(sid, 1, 1, title="Good News About Hell")
-    src = write(dl / "Severance.S01E01.1080p.WEB-DL.mkv")
+    src = write(dl / "Meridian.S01E01.1080p.WEB-DL.mkv")
     d = {"id": 1, "series_id": sid, "episode_id": e, "movie_id": None}
 
-    res = app.importer.import_download(d, "/downloads/Severance.S01E01.1080p.WEB-DL.mkv")
+    res = app.importer.import_download(d, "/downloads/Meridian.S01E01.1080p.WEB-DL.mkv")
 
     assert res.ok, res
     imp = res.imported[0]
     assert imp.action == "hardlink"
     dest = Path(imp.destination)
-    assert dest.name == "Severance - S01E01 - Good News About Hell.mkv"
+    assert dest.name == "Meridian - S01E01 - Good News About Hell.mkv"
     assert "Season 01" in str(dest)
     # Hardlink -> same inode as the source.
     assert dest.stat().st_ino == src.stat().st_ino
@@ -130,16 +130,16 @@ def test_copy_mode(library):
 def test_movie_picks_largest_file(library):
     app, dl, lib = library
     mid = app.db.upsert_movie(
-        provider="tmdb", provider_id="9", title="Dune", year=2021,
-        root_folder="mv", folder_name="Dune (2021)",
+        provider="tmdb", provider_id="9", title="Nebula", year=2021,
+        root_folder="mv", folder_name="Nebula (2021)",
     )
-    mdir = dl / "Dune.2021.2160p"
-    write(mdir / "Dune.2021.2160p.mkv", size=5000)
+    mdir = dl / "Nebula.2021.2160p"
+    write(mdir / "Nebula.2021.2160p.mkv", size=5000)
     write(mdir / "extras.mkv", size=100)
     d = {"id": 1, "series_id": None, "episode_id": None, "movie_id": mid}
-    res = app.importer.import_download(d, "/downloads/Dune.2021.2160p")
+    res = app.importer.import_download(d, "/downloads/Nebula.2021.2160p")
     assert res.ok
-    assert Path(res.imported[0].destination).name == "Dune (2021).mkv"
+    assert Path(res.imported[0].destination).name == "Nebula (2021).mkv"
     assert app.db.get_movie(mid)["movie_status"] == "downloaded"
 
 
@@ -192,17 +192,17 @@ def test_single_host_no_mappings_needed(app, tmp_path):
 def test_anime_absolute_numbered_import(library):
     app, dl, lib = library
     sid = app.db.upsert_series(
-        provider="jikan", provider_id="52991", title="Frieren", year=2023,
-        root_folder="tv", folder_name="Frieren (2023)", absolute_numbering=1,
+        provider="jikan", provider_id="52991", title="Aethering", year=2023,
+        root_folder="tv", folder_name="Aethering (2023)", absolute_numbering=1,
     )
     e1 = app.db.upsert_episode(sid, 1, 1, title="The Journey's End")
     e2 = app.db.upsert_episode(sid, 1, 2, title="It Didn't Have to Be Magic")
-    pack = dl / "Frieren.Batch"
-    write(pack / "[SubsPlease] Sousou no Frieren - 01 (1080p) [ABCD].mkv")
-    write(pack / "[SubsPlease] Sousou no Frieren - 02 (1080p) [EF12].mkv")
+    pack = dl / "Aethering.Batch"
+    write(pack / "[FanSubA] Aetheria Gaiden - 01 (1080p) [ABCD].mkv")
+    write(pack / "[FanSubA] Aetheria Gaiden - 02 (1080p) [EF12].mkv")
     d = {"id": 1, "series_id": sid, "episode_id": None, "movie_id": None}
 
-    res = app.importer.import_download(d, "/downloads/Frieren.Batch")
+    res = app.importer.import_download(d, "/downloads/Aethering.Batch")
 
     got = sorted((i.season, i.episode) for i in res.imported)
     assert got == [(1, 1), (1, 2)], res

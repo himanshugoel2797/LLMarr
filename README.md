@@ -208,9 +208,9 @@ client on connect, so a capable LLM will start there on its own.
 ## Typical flow
 
 ```
-search_series("severance")            -> pick a TMDB id
-add_series("95396", seasons=[1,2])    -> library + episode list, monitored
-search_releases("severance S02E01")   -> ranked torrents (quality rules applied)
+search_series("your show")            -> pick a metadata id
+add_series("<id>", seasons=[1,2])     -> library + episode list, monitored
+search_releases("your show S02E01")   -> ranked torrents (quality rules applied)
 grab_release(grab_url=…, series_id=1, episode_id=42)
 refresh_downloads()                   -> marks completed, scans Plex
 ```

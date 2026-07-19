@@ -9,7 +9,7 @@ from llmarr.metadata.base import EpisodeInfo, SeriesInfo
 
 def _anime_info(n=28):
     return SeriesInfo(
-        provider="jikan", provider_id="52991", title="Frieren", year=2023, seasons=[1],
+        provider="jikan", provider_id="52991", title="Aethering", year=2023, seasons=[1],
         episodes=[EpisodeInfo(season=1, episode=i, title=f"E{i}") for i in range(1, n + 1)],
     )
 
@@ -25,7 +25,7 @@ async def test_activate_absolute_marks_present_episodes(plex_configured, fakes, 
     app = plex_configured
     # Catalogued from Plex: provider="plex", no episodes, absolute (anime section).
     sid = app.db.upsert_series(
-        provider="plex", provider_id="101", title="Frieren", absolute_numbering=1
+        provider="plex", provider_id="101", title="Aethering", absolute_numbering=1
     )
     # Plex currently has 12 aired episodes on disk.
     plex = FakePlex()
@@ -78,8 +78,8 @@ async def test_activate_requires_provider_for_plex_only_entry(plex_configured):
 
 async def test_activate_conflict_returns_error(plex_configured, fakes, monkeypatch):
     app = plex_configured
-    app.db.upsert_series(provider="jikan", provider_id="52991", title="Existing Frieren")
-    sid = app.db.upsert_series(provider="plex", provider_id="101", title="Frieren", absolute_numbering=1)
+    app.db.upsert_series(provider="jikan", provider_id="52991", title="Existing Aethering")
+    sid = app.db.upsert_series(provider="plex", provider_id="101", title="Aethering", absolute_numbering=1)
     monkeypatch.setattr(
         app, "provider", lambda *_a, **_k: fakes["Provider"](
             series_info=_anime_info(3), absolute_numbering=True
@@ -91,7 +91,7 @@ async def test_activate_conflict_returns_error(plex_configured, fakes, monkeypat
 
 async def test_activate_no_plex_still_adds_episodes(app, fakes, monkeypatch):
     # Plex not configured -> episodes fetched, none marked downloaded.
-    sid = app.db.upsert_series(provider="plex", provider_id="101", title="Frieren", absolute_numbering=1)
+    sid = app.db.upsert_series(provider="plex", provider_id="101", title="Aethering", absolute_numbering=1)
     monkeypatch.setattr(
         app, "provider", lambda *_a, **_k: fakes["Provider"](
             series_info=_anime_info(5), absolute_numbering=True

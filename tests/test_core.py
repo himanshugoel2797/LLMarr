@@ -25,7 +25,7 @@ def configured(app):
 # --------------------------------------------------------------------------- #
 async def test_add_series_populates_episodes(app, fakes, monkeypatch):
     info = SeriesInfo(
-        provider="tmdb", provider_id="1", title="Severance", year=2022,
+        provider="tmdb", provider_id="1", title="Meridian", year=2022,
         seasons=[1, 2],
         episodes=[
             EpisodeInfo(season=1, episode=1, title="A"),
@@ -36,7 +36,7 @@ async def test_add_series_populates_episodes(app, fakes, monkeypatch):
     monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](series_info=info))
 
     result = await app.add_series("1", seasons=[2])
-    assert result["title"] == "Severance"
+    assert result["title"] == "Meridian"
     assert result["episode_count"] == 3
     eps = app.db.list_episodes(result["id"])
     monitored = {(e["season"], e["episode"]): e["monitored"] for e in eps}
@@ -47,7 +47,7 @@ async def test_add_series_populates_episodes(app, fakes, monkeypatch):
 
 async def test_add_series_anime_sets_absolute_flag(app, fakes, monkeypatch):
     info = SeriesInfo(
-        provider="jikan", provider_id="52991", title="Frieren", year=2023,
+        provider="jikan", provider_id="52991", title="Aethering", year=2023,
         seasons=[1],
         episodes=[EpisodeInfo(season=1, episode=1, title="The Journey's End")],
     )
@@ -62,11 +62,11 @@ async def test_add_series_anime_sets_absolute_flag(app, fakes, monkeypatch):
 async def test_rss_poll_matches_anime_absolute_release(configured, fakes, monkeypatch):
     app = configured
     monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
-    rels = [fakes["make_release"]("[SubsPlease] Frieren - 01 (1080p) [ABCD].mkv", guid="a1", seeders=80)]
+    rels = [fakes["make_release"]("[FanSubA] Aethering - 01 (1080p) [ABCD].mkv", guid="a1", seeders=80)]
     monkeypatch.setattr(app, "prowlarr", lambda: fakes["Prowlarr"](releases=rels))
 
     sid = app.db.upsert_series(
-        provider="jikan", provider_id="52991", title="Frieren", monitored=1,
+        provider="jikan", provider_id="52991", title="Aethering", monitored=1,
         absolute_numbering=1,
     )
     e = app.db.upsert_episode(sid, 1, 1)
@@ -81,7 +81,7 @@ async def test_rss_poll_anime_release_ignored_for_standard_series(configured, fa
     """A standard (non-anime) series must NOT match an absolute-numbered release."""
     app = configured
     monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
-    rels = [fakes["make_release"]("[SubsPlease] Show - 01 (1080p)", guid="a1")]
+    rels = [fakes["make_release"]("[FanSubA] Show - 01 (1080p)", guid="a1")]
     monkeypatch.setattr(app, "prowlarr", lambda: fakes["Prowlarr"](releases=rels))
 
     sid = app.db.upsert_series(provider="tmdb", provider_id="1", title="Show", monitored=1)
@@ -203,11 +203,11 @@ async def test_rss_picks_second_best_when_top_seen(configured, fakes, monkeypatc
 
 
 async def test_add_movie(app, fakes, monkeypatch):
-    info = MovieInfo(provider="tmdb", provider_id="9", title="Dune", year=2021)
+    info = MovieInfo(provider="tmdb", provider_id="9", title="Nebula", year=2021)
     monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](movie_info=info))
     result = await app.add_movie("9")
-    assert result["title"] == "Dune"
-    assert result["folder_name"] == "Dune (2021)"
+    assert result["title"] == "Nebula"
+    assert result["folder_name"] == "Nebula (2021)"
     assert result["movie_status"] == "missing"
 
 
@@ -266,11 +266,11 @@ async def test_grab_anime_batch_marks_all(configured, fakes, monkeypatch):
     app = configured
     monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
     sid = app.db.upsert_series(
-        provider="jikan", provider_id="1", title="Frieren", absolute_numbering=1
+        provider="jikan", provider_id="1", title="Aethering", absolute_numbering=1
     )
     eps = [app.db.upsert_episode(sid, 1, n) for n in range(1, 5)]
     res = await app.grab(
-        "magnet:?xt=urn:btih:" + "a" * 40, title="[Group] Frieren (01-28) [Batch]", series_id=sid
+        "magnet:?xt=urn:btih:" + "a" * 40, title="[Group] Aethering (01-28) [Batch]", series_id=sid
     )
     assert res["covered_episodes"] == 4
     assert all(app.db.get_episode(e)["status"] == "grabbed" for e in eps)
@@ -327,8 +327,8 @@ async def test_grab_season_no_pack_found(configured, fakes, monkeypatch):
 async def test_grab_movie_marks_movie(configured, fakes, monkeypatch):
     app = configured
     monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
-    mid = app.db.upsert_movie(provider="tmdb", provider_id="9", title="Dune")
-    res = await app.grab("magnet:?xt=urn:btih:" + "a" * 40, title="Dune.2021", movie_id=mid)
+    mid = app.db.upsert_movie(provider="tmdb", provider_id="9", title="Nebula")
+    res = await app.grab("magnet:?xt=urn:btih:" + "a" * 40, title="Nebula.2021", movie_id=mid)
     assert app.db.get_movie(mid)["movie_status"] == "grabbed"
     assert app.db.get_download(res["download_id"])["movie_id"] == mid
 
@@ -459,11 +459,11 @@ async def test_rss_poll_candidates_when_autograb_off(configured, fakes, monkeypa
 async def test_rss_poll_auto_grabs_missing_movie(configured, fakes, monkeypatch):
     app = configured
     monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
-    rels = [fakes["make_release"]("Dune.2021.1080p.WEB", guid="m1", seeders=80)]
+    rels = [fakes["make_release"]("Nebula.2021.1080p.WEB", guid="m1", seeders=80)]
     monkeypatch.setattr(app, "prowlarr", lambda: fakes["Prowlarr"](releases=rels))
 
-    mid = app.db.upsert_movie(provider="tmdb", provider_id="9", title="Dune", year=2021, monitored=1)
+    mid = app.db.upsert_movie(provider="tmdb", provider_id="9", title="Nebula", year=2021, monitored=1)
     result = await app.rss_poll()
     assert result["checked_movies"] == 1
-    assert any(g.get("movie") == "Dune" for g in result["grabbed"])
+    assert any(g.get("movie") == "Nebula" for g in result["grabbed"])
     assert app.db.get_movie(mid)["movie_status"] == "grabbed"

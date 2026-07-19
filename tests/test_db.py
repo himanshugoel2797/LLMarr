@@ -63,12 +63,12 @@ def test_grab_history_dedup(db):
 
 
 def test_movie_lifecycle(db):
-    mid = db.upsert_movie(provider="tmdb", provider_id="9", title="Dune", year=2021)
+    mid = db.upsert_movie(provider="tmdb", provider_id="9", title="Nebula", year=2021)
     assert db.get_movie(mid)["movie_status"] == "missing"
     db.set_movie_status(mid, "grabbed")
     assert db.get_movie(mid)["movie_status"] == "grabbed"
-    db.set_movie_status(mid, "downloaded", "/lib/Dune (2021)/Dune (2021).mkv")
-    assert db.get_movie(mid)["file_path"].endswith("Dune (2021).mkv")
+    db.set_movie_status(mid, "downloaded", "/lib/Nebula (2021)/Nebula (2021).mkv")
+    assert db.get_movie(mid)["file_path"].endswith("Nebula (2021).mkv")
     db.set_movie_monitored(mid, False)
     assert db.get_movie(mid)["monitored"] == 0
     db.delete_movie(mid)
@@ -76,11 +76,11 @@ def test_movie_lifecycle(db):
 
 
 def test_movie_upsert_preserves_status(db):
-    mid = db.upsert_movie(provider="tmdb", provider_id="9", title="Dune", year=2021)
+    mid = db.upsert_movie(provider="tmdb", provider_id="9", title="Nebula", year=2021)
     db.set_movie_status(mid, "downloaded", "/x.mkv")
-    db.upsert_movie(provider="tmdb", provider_id="9", title="Dune: Part One", year=2021)
+    db.upsert_movie(provider="tmdb", provider_id="9", title="Nebula: Part One", year=2021)
     assert db.get_movie(mid)["movie_status"] == "downloaded"
-    assert db.get_movie(mid)["title"] == "Dune: Part One"
+    assert db.get_movie(mid)["title"] == "Nebula: Part One"
 
 
 def test_cascade_delete_series_removes_episodes(db):

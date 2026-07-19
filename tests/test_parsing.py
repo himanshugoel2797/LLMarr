@@ -6,7 +6,7 @@ from llmarr import parsing
 @pytest.mark.parametrize(
     "title,expected",
     [
-        ("Severance.S02E01.1080p.WEB-DL.x265", (2, 1)),
+        ("Meridian.S02E01.1080p.WEB-DL.x265", (2, 1)),
         ("Show s1e2 720p", (1, 2)),
         ("Show 1x05 720p", (1, 5)),
         ("Show.S10E100.mkv", (10, 100)),
@@ -61,20 +61,20 @@ def test_matches_episode_season_pack():
 @pytest.mark.parametrize(
     "title,expected",
     [
-        ("[SubsPlease] Frieren - 12 (1080p) [ABCD1234].mkv", 12),
-        ("[Erai-raws] Sousou no Frieren - 28 [1080p]", 28),
-        ("Frieren - 12v2 [1080p]", 12),
-        ("[Group] Spy x Family - 07 [720p]", 7),
-        ("K-On! - 05 [BD]", 5),
-        ("[HorribleSubs] Show Name - 100 [1080p]", 100),
-        ("Mob Psycho 100 - 08 [1080p]", 8),
+        ("[FanSubA] Aethering - 12 (1080p) [ABCD1234].mkv", 12),
+        ("[GroupB] Aetheria Gaiden - 28 [1080p]", 28),
+        ("Aethering - 12v2 [1080p]", 12),
+        ("[Group] Blade x Soul - 07 [720p]", 7),
+        ("Lo-Fi! - 05 [BD]", 5),
+        ("[SubsX] Show Name - 100 [1080p]", 100),
+        ("Arena 100 - 08 [1080p]", 8),
         ("Show Episode 12 1080p", 12),
         ("Show E12 [1080p]", 12),
         # False positives that must NOT parse as an episode:
-        ("[Group] Attack on Titan 1080p", None),
+        ("[Group] Ironhold 1080p", None),
         ("[Group] Show Name (2023) 1080p", None),
         ("[Group] Show - 1080p", None),
-        ("[Group] Fullmetal Alchemist Brotherhood [BD]", None),
+        ("[Group] Steel Alchemy Saga [BD]", None),
     ],
 )
 def test_parse_absolute_episode(title, expected):
@@ -84,12 +84,12 @@ def test_parse_absolute_episode(title, expected):
 @pytest.mark.parametrize(
     "title,expected",
     [
-        ("[Group] Frieren (01-28) [1080p][Batch]", (1, 28)),
+        ("[Group] Aethering (01-28) [1080p][Batch]", (1, 28)),
         ("[Group] Show 01~12 [BD]", (1, 12)),
         ("[Group] Show E01-E24", (1, 24)),
         ("[Group] Show - 12", None),  # single episode, not a range
         # "Season N-M" is a season span, NOT an episode range:
-        ("[Tenrai-Sensei] Amagami SS (Season 1-2 + OVAs) [BD]", None),
+        ("[Archivist] Twin Star SS (Season 1-2 + OVAs) [BD]", None),
         ("[Group] Show Seasons 1-3 [1080p]", None),
     ],
 )
@@ -98,16 +98,16 @@ def test_parse_absolute_range(title, expected):
 
 
 def test_matches_episode_absolute():
-    assert parsing.matches_episode_absolute("[SubsPlease] Frieren - 12 (1080p)", 12) is True
-    assert parsing.matches_episode_absolute("[SubsPlease] Frieren - 12 (1080p)", 13) is False
+    assert parsing.matches_episode_absolute("[FanSubA] Aethering - 12 (1080p)", 12) is True
+    assert parsing.matches_episode_absolute("[FanSubA] Aethering - 12 (1080p)", 13) is False
     # batch/range covers the episode
-    assert parsing.matches_episode_absolute("[Group] Frieren (01-28) [Batch]", 12) is True
-    assert parsing.matches_episode_absolute("[Group] Frieren (01-28) [Batch]", 40) is False
+    assert parsing.matches_episode_absolute("[Group] Aethering (01-28) [Batch]", 12) is True
+    assert parsing.matches_episode_absolute("[Group] Aethering (01-28) [Batch]", 40) is False
     # bare batch matches any
-    assert parsing.matches_episode_absolute("[Group] Frieren [Batch]", 5) is True
+    assert parsing.matches_episode_absolute("[Group] Aethering [Batch]", 5) is True
     # SxxExx still honoured as season 1
-    assert parsing.matches_episode_absolute("Frieren S01E12", 12) is True
-    assert parsing.matches_episode_absolute("Frieren S02E12", 12) is False
+    assert parsing.matches_episode_absolute("Aethering S01E12", 12) is True
+    assert parsing.matches_episode_absolute("Aethering S02E12", 12) is False
 
 
 def test_title_matches_episode_dispatch():
