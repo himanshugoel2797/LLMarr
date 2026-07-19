@@ -411,3 +411,118 @@ def test_movie_upgrade_replaces_and_records_quality(library):
     assert r2.ok
     assert app.db.get_movie(mid)["quality"] == "1080p"
     assert dest.stat().st_ino == src2.stat().st_ino
+
+
+# -- bundled sequels and specials (pack layout) ----------------------------- #
+
+def _amagami_style_pack(app, dl, extras=True):
+    """A 'complete series' pack: the grabbed show, a differently-named sequel
+    bundled alongside it, and specials from both."""
+    sid = app.db.upsert_series(
+        provider="jikan", provider_id="8676", title="Amagami SS", year=2010,
+        root_folder="tv", folder_name="Amagami SS (2010)", absolute_numbering=1,
+    )
+    for n in (1, 2):
+        app.db.upsert_episode(sid, 1, n, title=f"Ep {n}")
+    pack = dl / "Amagami SS"
+    for n in (1, 2, 3):  # 3 is a bonus episode the provider never listed
+        write(pack / "Amagami SS" / f"[DB]Amagami SS_-_{n:02d}_(10bit_BD1080p_x265).mkv")
+    for n in (1, 2):
+        write(pack / "Amagami SS+ Plus" / f"[DB]Amagami SS+ Plus_-_{n:02d}_(10bit_BD1080p_x265).mkv")
+    if extras:
+        write(pack / "Amagami SS" / "Extras" / "[DB]Amagami SS_-_SP01-03_(10bit_DVD576p_x265).mkv")
+        write(pack / "Amagami SS+ Plus" / "Extras" / "[DB]Amagami SS+ Plus_-_SP02_(10bit_BD1080p_x265).mkv")
+    return sid, {"id": 1, "series_id": sid, "episode_id": None, "movie_id": None}
+
+
+def test_bundled_sequel_becomes_a_later_season(library):
+    app, dl, lib = library
+    sid, d = _amagami_style_pack(app, dl, extras=False)
+
+    res = app.importer.import_download(d, "/downloads/Amagami SS")
+
+    got = sorted((i.season, i.episode) for i in res.imported)
+    # The grabbed show stays season 1; the sequel lands in season 2 with its own
+    # numbering rather than colliding with season 1's episodes 1-2.
+    assert got == [(1, 1), (1, 2), (1, 3), (2, 1), (2, 2)], res
+    assert not res.errors and not res.skipped, res
+    assert (lib / "Amagami SS (2010)" / "Season 02" / "Amagami SS - S02E01.mkv").exists()
+    # Every file got its own destination — nothing silently swallowed as "exists".
+    assert len({i.destination for i in res.imported}) == 5
+
+
+def test_pack_registers_episodes_metadata_never_listed(library):
+    app, dl, lib = library
+    sid, d = _amagami_style_pack(app, dl, extras=False)
+
+    res = app.importer.import_download(d, "/downloads/Amagami SS")
+
+    assert sorted(res.added_episodes) == ["S01E03", "S02E01", "S02E02"]
+    rows = {(e["season"], e["episode"]): e for e in app.db.list_episodes(sid)}
+    assert set(rows) == {(1, 1), (1, 2), (1, 3), (2, 1), (2, 2)}
+    assert all(e["status"] == "downloaded" and e["file_path"] for e in rows.values())
+
+
+def test_specials_go_to_season_zero_without_colliding(library):
+    app, dl, lib = library
+    sid, d = _amagami_style_pack(app, dl, extras=True)
+
+    res = app.importer.import_download(d, "/downloads/Amagami SS")
+
+    specials = sorted(i.episode for i in res.imported if i.season == 0)
+    # SP01-03 is one file spanning three specials; the sequel's SP02 follows it
+    # rather than reusing a number already taken by the first show.
+    assert specials == [1, 2, 3, 4]
+    span = {i.destination for i in res.imported if i.season == 0 and i.episode in (1, 2, 3)}
+    assert len(span) == 1  # one physical file covers the three-special span
+    assert (lib / "Amagami SS (2010)" / "Season 00").is_dir()
+
+
+def test_single_show_pack_still_maps_to_season_one(library):
+    """The common case is unchanged: no sequel bundled, no season shuffling."""
+    app, dl, lib = library
+    sid = app.db.upsert_series(
+        provider="jikan", provider_id="1", title="Aethering", year=2023,
+        root_folder="tv", folder_name="Aethering (2023)", absolute_numbering=1,
+    )
+    app.db.upsert_episode(sid, 1, 1, title="One")
+    pack = dl / "Aethering"
+    write(pack / "[FanSubA] Aethering - 01 (1080p).mkv")
+    write(pack / "[FanSubA] Aethering - 02 (1080p).mkv")
+    d = {"id": 1, "series_id": sid, "episode_id": None, "movie_id": None}
+
+    res = app.importer.import_download(d, "/downloads/Aethering")
+
+    assert sorted((i.season, i.episode) for i in res.imported) == [(1, 1), (1, 2)]
+
+
+def test_create_missing_episodes_off_skips_unlisted(library):
+    app, dl, lib = library
+    app.store.mutate(lambda c: setattr(c.importer, "create_missing_episodes", False))
+    sid, d = _amagami_style_pack(app, dl, extras=False)
+
+    res = app.importer.import_download(d, "/downloads/Amagami SS")
+
+    assert sorted((i.season, i.episode) for i in res.imported) == [(1, 1), (1, 2)]
+    assert res.added_episodes == []
+    assert len(res.skipped) == 3
+
+
+def test_regular_tv_never_invents_episodes(library):
+    """Auto-creation is absolute-numbering only — ordinary TV keeps skipping."""
+    app, dl, lib = library
+    sid = app.db.upsert_series(
+        provider="tmdb", provider_id="1", title="Meridian", year=2022,
+        root_folder="tv", folder_name="Meridian (2022)",
+    )
+    app.db.upsert_episode(sid, 1, 1, title="One")
+    pack = dl / "Meridian.S01"
+    write(pack / "Meridian.S01E01.1080p.mkv")
+    write(pack / "Meridian.S01E09.1080p.mkv")
+    d = {"id": 1, "series_id": sid, "episode_id": None, "movie_id": None}
+
+    res = app.importer.import_download(d, "/downloads/Meridian.S01")
+
+    assert [(i.season, i.episode) for i in res.imported] == [(1, 1)]
+    assert res.added_episodes == []
+    assert any("S01E09 not in library" in s for s in res.skipped)

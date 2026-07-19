@@ -103,6 +103,56 @@ def resolution_rank(res: Optional[str]) -> int:
         return -1
 
 
+# --- pack layout: bundled sequels and specials ------------------------------ #
+# A "complete series" pack routinely bundles more than the series that was
+# grabbed: a differently-named sequel ("Amagami SS" + "Amagami SS+ Plus") and a
+# pile of specials. Both are folded into the one series LLMarr grabbed for —
+# sequels become later seasons, specials become season 0 — so the helpers below
+# only need to answer "which show is this file from" and "is it a special".
+
+# SP01, SP01-03, "Special 2", "OVA 3" — one special or a span of them.
+_SPECIAL = re.compile(
+    r"(?:^|[\s._\[\(-])(?:SP|Special|OVA)[\s._]*(\d{1,3})"
+    r"(?:[\s._]*[-~][\s._]*(?:SP)?(\d{1,3}))?",
+    re.IGNORECASE,
+)
+
+# Leading release-group tag: "[DB]", "(Group)".
+_GROUP_TAG = re.compile(r"^\s*[\[\(][^\]\)]*[\]\)]\s*")
+# Where the show name stops and the episode token starts: a dash separator
+# followed by a number, optionally prefixed by SP/OVA/NCOP/NCED.
+_SHOW_CUT = re.compile(
+    r"[\s._]+[-–][\s._]*(?=(?:SP|OVA|Special|NC(?:OP|ED))?\d)", re.IGNORECASE
+)
+
+
+def parse_special(name: str) -> list[int]:
+    """Return the special number(s) a filename names — ``SP01`` → ``[1]``,
+    ``SP01-03`` → ``[1, 2, 3]``. Empty when it isn't a special."""
+    m = _SPECIAL.search(name)
+    if not m:
+        return []
+    start = int(m.group(1))
+    end = int(m.group(2)) if m.group(2) else start
+    if not start <= end <= start + 50:
+        end = start
+    return list(range(start, end + 1))
+
+
+def show_group_key(name: str) -> str:
+    """Normalised show-name prefix of a release filename, used to spot when one
+    pack bundles several differently-named shows.
+
+    ``[DB]Amagami SS+ Plus_-_03_(10bit_BD1080p_x265)`` → ``amagami ss+ plus``.
+    """
+    s = _GROUP_TAG.sub("", name)
+    m = _SHOW_CUT.search(s)
+    if m:
+        s = s[: m.start()]
+    s = re.sub(r"[._]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip(" -_").casefold()
+
+
 def matches_episode(title: str, season: int, episode: int) -> bool:
     """True if ``title`` covers this specific episode (single ep or its season pack)."""
     se = parse_episode(title)

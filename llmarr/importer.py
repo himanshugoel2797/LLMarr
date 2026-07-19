@@ -30,7 +30,9 @@ from .parsing import (
     parse_episode,
     parse_multi_episode,
     parse_resolution,
+    parse_special,
     resolution_rank,
+    show_group_key,
 )
 
 # Subtitle sidecars imported alongside their video (kept in step with the video's
@@ -52,6 +54,7 @@ class ImportResult(BaseModel):
     scan_paths: list[str] = []  # library dirs (work context) to hand to Plex
     skipped: list[str] = []
     replaced: list[str] = []  # previous files removed on a quality upgrade (G4)
+    added_episodes: list[str] = []  # slots the pack carried but metadata didn't list
     errors: list[str] = []
 
     @property
@@ -251,6 +254,59 @@ class Importer:
             return self._import_movie(download, videos, result)
         return self._import_series(download, videos, result)
 
+    # -- pack layout -------------------------------------------------------- #
+    def _pack_layout(
+        self, series: dict, videos: list[Path]
+    ) -> dict[Path, list[tuple[int, int]]]:
+        """Map each file in an absolute-numbered pack to the (season, episode)
+        slots it covers.
+
+        Packs bundle more than the show that was grabbed. Files are grouped by the
+        show name in their filename: the group matching the series title is season
+        1, and any differently-named sequel bundled alongside it becomes season 2,
+        3, ... in name order. Specials (SP/OVA) go to season 0, numbered
+        sequentially across the whole pack — their own SP numbers restart per show
+        and would otherwise collide.
+        """
+        layout: dict[Path, list[tuple[int, int]]] = {}
+        regular: list[Path] = []
+        extras: list[Path] = []
+        for v in videos:
+            (extras if parse_special(v.name) else regular).append(v)
+
+        groups = {show_group_key(v.stem) for v in regular}
+        if len(groups) > 1:
+            base = show_group_key(_sanitize(series["title"]))
+            # An exact title match anchors season 1; otherwise the shortest name,
+            # since a sequel's name is the base name plus a suffix. Alphabetical
+            # tie-break keeps the assignment stable across re-imports.
+            primary = min(groups, key=lambda g: (g != base, len(g), g))
+            season_of = {primary: 1}
+            for i, g in enumerate(sorted(groups - {primary}), start=2):
+                season_of[g] = i
+        else:
+            season_of = {g: 1 for g in groups}
+
+        for v in regular:
+            n = parse_absolute_episode(v.name)
+            layout[v] = (
+                [(season_of[show_group_key(v.stem)], n)]
+                if n is not None
+                else parse_multi_episode(v.name)
+            )
+
+        if not self.cfg.import_specials:
+            return layout
+        ordered = sorted(
+            extras, key=lambda v: (show_group_key(v.stem), parse_special(v.name)[0], v.name)
+        )
+        slot = 1
+        for v in ordered:
+            count = len(parse_special(v.name))
+            layout[v] = [(0, slot + i) for i in range(count)]
+            slot += count
+        return layout
+
     # -- series ------------------------------------------------------------- #
     def _import_series(self, download: dict, videos: list[Path], result: ImportResult):
         series = self.app.db.get_series(download.get("series_id")) if download.get("series_id") else None
@@ -268,13 +324,14 @@ class Importer:
         is_upg = bool(download.get("is_upgrade"))
 
         linked_episode_id = download.get("episode_id")
+        # Absolute-numbered packs need a whole-pack view first: seasons are implied
+        # by which bundled show a file belongs to, not by its name alone.
+        layout = self._pack_layout(series, videos) if absolute else {}
+        create_missing = absolute and self.cfg.create_missing_episodes
         scan_dirs: set[str] = set()
         for video in videos:
             if absolute:
-                # Anime files use absolute numbers ([Group] Show - 12); map to
-                # season 1. Fall back to SxxExx if the file happens to use it.
-                n = parse_absolute_episode(video.name)
-                pairs = [(1, n)] if n is not None else parse_multi_episode(video.name)
+                pairs = layout.get(video, [])
             else:
                 # parse_multi_episode handles both single (S01E01) and
                 # double/multi-episode files (S01E01E02 / S01E01-E02).
@@ -287,6 +344,15 @@ class Importer:
                         "SELECT * FROM episodes WHERE series_id=? AND season=? AND episode=?",
                         (series["id"], season, episode),
                     )
+                    if not row and create_missing:
+                        # A bonus episode, a special, or a bundled sequel the
+                        # metadata provider never listed — register it rather than
+                        # dropping the file on the floor.
+                        fields = {"title": f"Special {episode}"} if season == 0 else {}
+                        row = self.app.db.get_episode(
+                            self.app.db.upsert_episode(series["id"], season, episode, **fields)
+                        )
+                        result.added_episodes.append(f"S{season:02d}E{episode:02d}")
                     if row:
                         eps.append(row)
                 if not eps:

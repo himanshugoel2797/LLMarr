@@ -156,6 +156,13 @@ class ImportConfig(BaseModel):
     rename: bool = True
     work_context: str = "local"
     min_video_mb: int = 50  # skip samples / stray small files
+    # Packs routinely carry more than the metadata provider lists: a bonus episode,
+    # specials, or a differently-named sequel. Create the missing episode rows on
+    # import rather than skipping those files. Absolute-numbered (anime) series
+    # only — ordinary TV carries its own SxxExx and shouldn't invent episodes.
+    create_missing_episodes: bool = True
+    # Fold specials (SP01, OVA 2, ...) found in a pack into season 0.
+    import_specials: bool = True
     # Refuse a grab (when the size is known) or an import copy that would leave the
     # target filesystem with less than this much free space (MB). 0 = disabled.
     min_free_space_mb: int = 0
