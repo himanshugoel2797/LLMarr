@@ -2,8 +2,9 @@
 
 Jikan (https://jikan.moe) exposes MyAnimeList's catalogue with **no API key**,
 which makes it a drop-in anime-specialised metadata source. It proxies MAL, so it
-can return transient 5xx when MAL is slow; requests are retried with backoff, and
-its rate limit (~3 req/s) is respected when paging episodes.
+can return transient 5xx when MAL is slow; requests are retried with backoff. Its
+documented rate limits (3 requests/second, 60/minute) are enforced globally by a
+shared limiter (:class:`_RateLimiter`) across all requests and provider instances.
 
 Anime don't use Sonarr-style season/episode numbering — each MAL entry is one
 cour/season with episodes numbered from 1 — so entries are modelled as a single
@@ -14,6 +15,8 @@ Per-episode titles come from the /episodes endpoint.
 from __future__ import annotations
 
 import asyncio
+import time
+from collections import deque
 
 import httpx
 
@@ -28,7 +31,50 @@ from .base import (
 
 _BASE = "https://api.jikan.moe/v4"
 _MAX_EPISODE_PAGES = 25  # safety cap (~2500 episodes)
-_PAGE_DELAY = 0.5  # seconds between episode pages (rate-limit courtesy)
+
+
+class _RateLimiter:
+    """Async sliding-window limiter shared by all Jikan requests.
+
+    Jikan's documented limits are 3 requests/second and 60 requests/minute;
+    exceeding them returns 429s (and can get you temporarily blocked). Because a
+    fresh :class:`JikanProvider` is built per call, the limiter is a module-level
+    singleton so the caps hold across every provider instance and concurrent
+    operation on the event loop.
+    """
+
+    def __init__(self, per_second: int = 3, per_minute: int = 60):
+        self.per_second = per_second
+        self.per_minute = per_minute
+        self._times: deque[float] = deque()
+        self._lock: asyncio.Lock | None = None
+
+    async def acquire(self) -> None:
+        if self._lock is None:  # lazily bind to the running loop
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            while True:
+                now = time.monotonic()
+                while self._times and now - self._times[0] >= 60:
+                    self._times.popleft()
+                if len(self._times) >= self.per_minute:
+                    await asyncio.sleep(60 - (now - self._times[0]))
+                    continue
+                recent = [t for t in self._times if now - t < 1.0]
+                if len(recent) >= self.per_second:
+                    await asyncio.sleep(1.0 - (now - recent[0]) + 0.001)
+                    continue
+                self._times.append(now)
+                return
+
+
+class _NullRateLimiter:
+    async def acquire(self) -> None:  # used to disable pacing in tests
+        return
+
+
+# Shared across the whole process. Tests swap in _NullRateLimiter.
+_LIMITER: _RateLimiter | _NullRateLimiter = _RateLimiter(per_second=3, per_minute=60)
 
 
 def _year(entry: dict) -> int | None:
@@ -57,6 +103,7 @@ class JikanProvider(MetadataProvider):
     async def _get(self, client: httpx.AsyncClient, path: str, **params) -> dict:
         last_exc: Exception | None = None
         for attempt in range(4):
+            await _LIMITER.acquire()  # respect Jikan's 3/s + 60/min limits
             try:
                 resp = await client.get(f"{_BASE}{path}", params=params)
             except httpx.HTTPError as exc:  # network hiccup
@@ -120,8 +167,7 @@ class JikanProvider(MetadataProvider):
                 )
             if not (data.get("pagination") or {}).get("has_next_page"):
                 break
-            page += 1
-            await asyncio.sleep(_PAGE_DELAY)
+            page += 1  # pacing between pages is handled by the shared rate limiter
         return episodes
 
     async def get_series(self, provider_id: str) -> SeriesInfo:

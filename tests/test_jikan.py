@@ -6,6 +6,12 @@ import pytest
 from llmarr.metadata import jikan
 
 
+@pytest.fixture(autouse=True)
+def _no_rate_limit(monkeypatch):
+    """Skip real rate-limit pacing for provider behaviour tests."""
+    monkeypatch.setattr(jikan, "_LIMITER", jikan._NullRateLimiter())
+
+
 def handler_for(routes, calls=None):
     def handler(request: httpx.Request) -> httpx.Response:
         if calls is not None:
@@ -126,6 +132,38 @@ async def test_persistent_5xx_raises_clear_error(mock_httpx, no_sleep):
     p = jikan.JikanProvider()
     with pytest.raises(RuntimeError, match="not responding"):
         await p.search_series("anything")
+
+
+@pytest.fixture
+def fake_clock(monkeypatch):
+    """Deterministic clock: monotonic() is controllable and sleep() advances it."""
+    clock = {"t": 0.0}
+    monkeypatch.setattr(jikan.time, "monotonic", lambda: clock["t"])
+
+    async def fake_sleep(d):
+        clock["t"] += max(d, 0.0)
+
+    monkeypatch.setattr(jikan.asyncio, "sleep", fake_sleep)
+    return clock
+
+
+async def test_rate_limiter_enforces_per_second(fake_clock):
+    rl = jikan._RateLimiter(per_second=3, per_minute=1000)
+    for _ in range(3):
+        await rl.acquire()
+    assert fake_clock["t"] == 0.0  # first 3 in the same second: no wait
+    await rl.acquire()  # 4th must wait out the 1s window
+    assert fake_clock["t"] >= 1.0
+
+
+async def test_rate_limiter_enforces_per_minute(fake_clock):
+    rl = jikan._RateLimiter(per_second=1000, per_minute=60)
+    for _ in range(60):
+        await rl.acquire()
+        fake_clock["t"] += 0.001  # advance so the per-second cap never binds
+    assert fake_clock["t"] < 1.0
+    await rl.acquire()  # 61st must wait until the minute window frees
+    assert fake_clock["t"] >= 60.0
 
 
 async def test_get_movie(mock_httpx):
