@@ -25,7 +25,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from . import pathmap
-from .parsing import parse_episode
+from .parsing import parse_absolute_episode, parse_episode
 
 
 class ImportedFile(BaseModel):
@@ -160,11 +160,18 @@ class Importer:
             )
             return result
         series_dir = dest_root / _sanitize(series["folder_name"] or series["title"])
+        absolute = bool(series.get("absolute_numbering"))
 
         linked_episode_id = download.get("episode_id")
         scan_dirs: set[str] = set()
         for video in videos:
-            se = parse_episode(video.name)
+            if absolute:
+                # Anime files use absolute numbers ([Group] Show - 12); map to
+                # season 1. Fall back to SxxExx if the file happens to use it.
+                n = parse_absolute_episode(video.name)
+                se = (1, n) if n is not None else parse_episode(video.name)
+            else:
+                se = parse_episode(video.name)
             if se:
                 season, episode = se
                 ep = self.app.db.query_one(

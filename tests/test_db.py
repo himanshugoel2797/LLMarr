@@ -104,3 +104,19 @@ def test_migration_adds_movie_id(tmp_path):
     d = Database(p)
     cols = {r["name"] for r in d.query("PRAGMA table_info(downloads)")}
     assert "movie_id" in cols
+
+
+def test_migration_adds_absolute_numbering(tmp_path):
+    import sqlite3
+
+    p = tmp_path / "old.db"
+    conn = sqlite3.connect(p)
+    conn.executescript(
+        "CREATE TABLE series (id INTEGER PRIMARY KEY, provider TEXT, provider_id TEXT, "
+        "title TEXT, added_at REAL, UNIQUE(provider, provider_id));"
+    )
+    conn.commit()
+    conn.close()
+    d = Database(p)
+    cols = {r["name"] for r in d.query("PRAGMA table_info(series)")}
+    assert "absolute_numbering" in cols

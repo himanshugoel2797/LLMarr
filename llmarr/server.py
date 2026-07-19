@@ -646,17 +646,25 @@ async def search_episode_releases(
     series_id: int, season: int, episode: int, apply_quality: bool = True
 ) -> dict:
     """Search for releases of a specific episode of a library series and return
-    the ones that match that episode (single-episode or season pack)."""
-    from .parsing import matches_episode
+    the ones that match that episode (single-episode or season pack). Anime
+    series (absolute numbering) are queried and matched by absolute episode
+    number instead of SxxExx."""
+    from .parsing import title_matches_episode
 
     series = app().db.get_series(series_id)
     if not series:
         return {"error": f"No series with id {series_id}"}
-    query = f"{series['title']} S{season:02d}E{episode:02d}"
+    absolute = bool(series.get("absolute_numbering"))
+    if absolute:
+        query = f"{series['title']} {episode:02d}"
+    else:
+        query = f"{series['title']} S{season:02d}E{episode:02d}"
     all_releases = await app().search_releases(
         query, categories=[CAT_TV], apply_quality=apply_quality
     )
-    matched = [r for r in all_releases if matches_episode(r["title"], season, episode)]
+    matched = [
+        r for r in all_releases if title_matches_episode(r["title"], season, episode, absolute)
+    ]
     return {"query": query, "matched": matched, "other": [r for r in all_releases if r not in matched]}
 
 

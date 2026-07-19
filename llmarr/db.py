@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS series (
     quality_profile TEXT,
     root_folder   TEXT,
     folder_name   TEXT,
+    absolute_numbering INTEGER NOT NULL DEFAULT 0,
     added_at      REAL NOT NULL,
     UNIQUE(provider, provider_id)
 );
@@ -134,6 +135,11 @@ class Database:
             self._conn.execute(
                 "ALTER TABLE downloads ADD COLUMN movie_id INTEGER "
                 "REFERENCES movies(id) ON DELETE SET NULL"
+            )
+        scols = {r["name"] for r in self._conn.execute("PRAGMA table_info(series)")}
+        if "absolute_numbering" not in scols:
+            self._conn.execute(
+                "ALTER TABLE series ADD COLUMN absolute_numbering INTEGER NOT NULL DEFAULT 0"
             )
 
     # -- low level ---------------------------------------------------------- #

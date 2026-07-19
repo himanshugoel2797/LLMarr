@@ -56,6 +56,9 @@ class MovieInfo(BaseModel):
 
 class MetadataProvider(ABC):
     name: str
+    # True for sources whose entries use absolute episode numbering (anime), so
+    # releases/files are matched by absolute number rather than SxxExx.
+    absolute_numbering: bool = False
 
     @abstractmethod
     async def search_series(self, query: str) -> list[SeriesSearchResult]:

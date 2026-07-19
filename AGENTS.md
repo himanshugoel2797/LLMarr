@@ -95,13 +95,18 @@ tool functions, so it's reachable from both and testable without the MCP layer.
   MyAnimeList, no key). `get_provider(config, name)` selects one; tools take a
   `provider=` arg. Jikan flakes with 5xx (it proxies MAL) — the provider retries
   with backoff. Anime = season 1 with absolute episode numbers.
+- Anime absolute numbering: a provider sets `absolute_numbering=True`; add_series
+  stores it on `series.absolute_numbering`. `parsing.title_matches_episode(...,
+  absolute=)` and the importer dispatch to absolute parsing
+  (`parse_absolute_episode` / `parse_absolute_range` / `is_batch`) ONLY for
+  flagged series — never for standard TV, to avoid false `Show - 12` matches.
+  Absolute parser is regex-heavy; if you touch it, keep the false-positive tests
+  in test_parsing.py green (resolutions/years must not parse as episodes).
 - Only qBittorrent, Prowlarr, Plex are implemented for their layers. The ABCs
   exist so new providers/clients slot in without touching `core`.
 
 ## Not yet implemented (good next tasks)
 
-- Absolute-numbering release matching for anime (`[Group] Show - 12`), gated to
-  anime series so it doesn't cause false matches for regular TV.
 - Full Sonarr custom-format quality profiles.
 - Double-episode file parsing (`S01E01E02`).
 - Download clients beyond qBittorrent (Transmission/Deluge) via `DownloadClient`.

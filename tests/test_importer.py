@@ -189,6 +189,29 @@ def test_single_host_no_mappings_needed(app, tmp_path):
     assert dest.stat().st_ino == src.stat().st_ino  # hardlink
 
 
+def test_anime_absolute_numbered_import(library):
+    app, dl, lib = library
+    sid = app.db.upsert_series(
+        provider="jikan", provider_id="52991", title="Frieren", year=2023,
+        root_folder="tv", folder_name="Frieren (2023)", absolute_numbering=1,
+    )
+    e1 = app.db.upsert_episode(sid, 1, 1, title="The Journey's End")
+    e2 = app.db.upsert_episode(sid, 1, 2, title="It Didn't Have to Be Magic")
+    pack = dl / "Frieren.Batch"
+    write(pack / "[SubsPlease] Sousou no Frieren - 01 (1080p) [ABCD].mkv")
+    write(pack / "[SubsPlease] Sousou no Frieren - 02 (1080p) [EF12].mkv")
+    d = {"id": 1, "series_id": sid, "episode_id": None, "movie_id": None}
+
+    res = app.importer.import_download(d, "/downloads/Frieren.Batch")
+
+    got = sorted((i.season, i.episode) for i in res.imported)
+    assert got == [(1, 1), (1, 2)], res
+    assert app.db.get_episode(e1)["status"] == "downloaded"
+    assert app.db.get_episode(e2)["status"] == "downloaded"
+    # Renamed into the Season 01 layout.
+    assert "Season 01" in res.imported[0].destination
+
+
 def test_missing_video_files_skipped(library):
     app, dl, lib = library
     sid = app.db.upsert_series(

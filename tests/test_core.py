@@ -45,6 +45,53 @@ async def test_add_series_populates_episodes(app, fakes, monkeypatch):
     assert monitored[(1, 1)] == 0 and monitored[(1, 2)] == 0
 
 
+async def test_add_series_anime_sets_absolute_flag(app, fakes, monkeypatch):
+    info = SeriesInfo(
+        provider="jikan", provider_id="52991", title="Frieren", year=2023,
+        seasons=[1],
+        episodes=[EpisodeInfo(season=1, episode=1, title="The Journey's End")],
+    )
+    monkeypatch.setattr(
+        app, "provider",
+        lambda *_a, **_k: fakes["Provider"](series_info=info, absolute_numbering=True),
+    )
+    result = await app.add_series("52991", provider="jikan")
+    assert app.db.get_series(result["id"])["absolute_numbering"] == 1
+
+
+async def test_rss_poll_matches_anime_absolute_release(configured, fakes, monkeypatch):
+    app = configured
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
+    rels = [fakes["make_release"]("[SubsPlease] Frieren - 01 (1080p) [ABCD].mkv", guid="a1", seeders=80)]
+    monkeypatch.setattr(app, "prowlarr", lambda: fakes["Prowlarr"](releases=rels))
+
+    sid = app.db.upsert_series(
+        provider="jikan", provider_id="52991", title="Frieren", monitored=1,
+        absolute_numbering=1,
+    )
+    e = app.db.upsert_episode(sid, 1, 1)
+    app.db.execute("UPDATE episodes SET monitored=1 WHERE id=?", (e,))
+
+    result = await app.rss_poll()
+    assert len(result["grabbed"]) == 1
+    assert app.db.get_episode(e)["status"] == "grabbed"
+
+
+async def test_rss_poll_anime_release_ignored_for_standard_series(configured, fakes, monkeypatch):
+    """A standard (non-anime) series must NOT match an absolute-numbered release."""
+    app = configured
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
+    rels = [fakes["make_release"]("[SubsPlease] Show - 01 (1080p)", guid="a1")]
+    monkeypatch.setattr(app, "prowlarr", lambda: fakes["Prowlarr"](releases=rels))
+
+    sid = app.db.upsert_series(provider="tmdb", provider_id="1", title="Show", monitored=1)
+    e = app.db.upsert_episode(sid, 1, 1)
+    app.db.execute("UPDATE episodes SET monitored=1 WHERE id=?", (e,))
+
+    result = await app.rss_poll()
+    assert result["grabbed"] == []  # absolute matching not applied to standard TV
+
+
 async def test_add_movie(app, fakes, monkeypatch):
     info = MovieInfo(provider="tmdb", provider_id="9", title="Dune", year=2021)
     monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](movie_info=info))

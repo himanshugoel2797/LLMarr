@@ -252,12 +252,12 @@ for a single anime lookup, or make it the default with
 
 > **Anime episode numbering:** MyAnimeList models each cour/season as one entry
 > with absolute episode numbers, so LLMarr stores anime as **season 1, episodes
-> 1..N**. Anime releases are commonly named with absolute numbers
-> (`[Group] Show - 12 [1080p]`), which the default `SxxExx` matcher does not
-> recognise — so *manual* grabs (`grab_release` with a magnet/URL) and free-text
-> `search_releases` work, but per-episode auto-matching
-> (`grab_episode` / RSS auto-grab) is limited for anime until absolute-numbering
-> matching lands.
+> 1..N** and flags the series as absolute-numbered. Release matching and import
+> then understand absolute-numbered names (`[Group] Show - 12 [1080p]`), the
+> `Episode 12` / `E12` forms, and batches/ranges (`(01-28)`, `[Batch]`), so
+> `grab_episode`, RSS auto-grab and hardlink import all work for anime. Absolute
+> matching is applied **only** to anime series, so it can't cause false matches
+> on ordinary TV.
 
 ## Tool surface
 

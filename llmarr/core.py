@@ -19,7 +19,7 @@ from .importer import Importer
 from .indexers.prowlarr import CAT_MOVIE, CAT_TV, ProwlarrClient, Release
 from .metadata import get_provider
 from .notify.plex import PlexNotifier
-from .parsing import matches_episode, parse_resolution
+from .parsing import parse_resolution, title_matches_episode
 
 
 def _folder_name(title: str, year: Optional[int]) -> str:
@@ -86,7 +86,8 @@ class App:
         seasons: Optional[list[int]] = None,
         provider: Optional[str] = None,
     ) -> dict:
-        info = await self.provider(provider).get_series(provider_id)
+        prov = self.provider(provider)
+        info = await prov.get_series(provider_id)
         folder = _folder_name(info.title, info.year)
         series_id = self.db.upsert_series(
             provider=info.provider,
@@ -100,6 +101,7 @@ class App:
             quality_profile=quality_profile,
             root_folder=root_folder,
             folder_name=folder,
+            absolute_numbering=1 if getattr(prov, "absolute_numbering", False) else 0,
         )
         for ep in info.episodes:
             ep_monitored = monitored and (seasons is None or ep.season in seasons)
@@ -302,6 +304,7 @@ class App:
             if not missing:
                 continue
             title = series["title"]
+            absolute = bool(series.get("absolute_numbering"))
             try:
                 releases = await self.prowlarr().search(title, categories=[CAT_TV])
             except Exception as exc:  # noqa: BLE001
@@ -310,7 +313,9 @@ class App:
             for ep in missing:
                 checked += 1
                 matching = [
-                    r for r in releases if matches_episode(r.title, ep["season"], ep["episode"])
+                    r
+                    for r in releases
+                    if title_matches_episode(r.title, ep["season"], ep["episode"], absolute)
                 ]
                 pick = selector.best(matching, cfg.quality)
                 if not pick or not pick.grab_url:

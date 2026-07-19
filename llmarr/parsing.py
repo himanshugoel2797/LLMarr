@@ -13,6 +13,23 @@ _SEASON_ONLY = re.compile(r"[Ss](?:eason[ ._-]?)?(\d{1,2})(?![Ee\dxX])")
 
 _RES = re.compile(r"\b(2160p|1080p|720p|480p|4k)\b", re.IGNORECASE)
 
+# --- absolute (anime) numbering -------------------------------------------- #
+# Anime is released with absolute episode numbers, not SxxExx. The fansub
+# convention is "Title - 12 [tags]"; also "Episode 12" / "Ep 12" / "E12".
+# These are intentionally only used for series flagged as absolute-numbered, so a
+# false positive can't affect ordinary TV.
+_ABS_EPWORD = re.compile(r"\b(?:episode|ep)\.?[\s._]*(\d{1,4})\b", re.IGNORECASE)
+_ABS_E = re.compile(r"(?:^|[\s._])E(\d{1,3})(?![\dp])", re.IGNORECASE)
+# A dash used as a token separator (space/dot/underscore on its left), then the
+# number, optional "v2" version, not followed by another digit or a 'p'
+# (so " - 1080p" resolutions are excluded).
+_ABS_DASH = re.compile(r"[\s._][-–][\s._]*(\d{1,4})(?:v\d+)?(?![\dp])", re.IGNORECASE)
+# Batch/range: "(01-28)", "01~28", "E01-E12".
+_ABS_RANGE = re.compile(
+    r"(?:^|[\s._\[\(])E?(\d{1,4})[\s._]*[-~][\s._]*E?(\d{1,4})(?=[\s._\]\)v]|$)"
+)
+_BATCH = re.compile(r"\b(?:batch|complete)\b", re.IGNORECASE)
+
 
 def parse_episode(title: str) -> Optional[tuple[int, int]]:
     """Return (season, episode) if the title names a single episode."""
@@ -53,3 +70,48 @@ def matches_episode(title: str, season: int, episode: int) -> bool:
         return se == (season, episode)
     pack = parse_season_pack(title)
     return pack == season
+
+
+def parse_absolute_episode(title: str) -> Optional[int]:
+    """Return the absolute episode number from an anime-style release/filename,
+    e.g. ``[Group] Show - 12 [1080p]`` → 12. ``None`` if none is found."""
+    for rx in (_ABS_EPWORD, _ABS_E, _ABS_DASH):
+        matches = rx.findall(title)
+        if matches:
+            # The episode number is the last such token (name may contain others).
+            return int(matches[-1])
+    return None
+
+
+def parse_absolute_range(title: str) -> Optional[tuple[int, int]]:
+    """Return (start, end) for an anime batch/range like ``(01-28)``."""
+    for a, b in _ABS_RANGE.findall(title):
+        start, end = int(a), int(b)
+        if 0 < start < end and end - start <= 400:
+            return start, end
+    return None
+
+
+def is_batch(title: str) -> bool:
+    return bool(_BATCH.search(title))
+
+
+def matches_episode_absolute(title: str, episode: int) -> bool:
+    """True if an anime release/pack covers this absolute episode number."""
+    se = parse_episode(title)
+    if se:  # some anime still use SxxExx; treat as season 1
+        return se[0] == 1 and se[1] == episode
+    rng = parse_absolute_range(title)
+    if rng:
+        return rng[0] <= episode <= rng[1]
+    n = parse_absolute_episode(title)
+    if n is not None:
+        return n == episode
+    return is_batch(title)
+
+
+def title_matches_episode(title: str, season: int, episode: int, absolute: bool = False) -> bool:
+    """Dispatch to absolute (anime) or standard SxxExx matching."""
+    if absolute:
+        return matches_episode_absolute(title, episode)
+    return matches_episode(title, season, episode)

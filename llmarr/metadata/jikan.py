@@ -47,6 +47,7 @@ def _poster(entry: dict) -> str | None:
 
 class JikanProvider(MetadataProvider):
     name = "jikan"
+    absolute_numbering = True
 
     def __init__(self, language: str | None = None):
         # No API key. `language` is accepted for interface parity but Jikan/MAL

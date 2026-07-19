@@ -82,7 +82,9 @@ def make_release(title, guid=None, seeders=100, size=1_000_000_000,
 class FakeProvider:
     name = "fake"
 
-    def __init__(self, series=None, movies=None, series_info=None, movie_info=None):
+    def __init__(self, series=None, movies=None, series_info=None, movie_info=None,
+                 absolute_numbering=False):
+        self.absolute_numbering = absolute_numbering
         self._series = series or []
         self._movies = movies or []
         self._series_info = series_info

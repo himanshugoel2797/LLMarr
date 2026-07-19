@@ -53,3 +53,60 @@ def test_matches_episode_single():
 def test_matches_episode_season_pack():
     assert parsing.matches_episode("Show.S02.Complete.1080p", 2, 7) is True
     assert parsing.matches_episode("Show.S03.Complete.1080p", 2, 7) is False
+
+
+# --- absolute (anime) numbering -------------------------------------------- #
+@pytest.mark.parametrize(
+    "title,expected",
+    [
+        ("[SubsPlease] Frieren - 12 (1080p) [ABCD1234].mkv", 12),
+        ("[Erai-raws] Sousou no Frieren - 28 [1080p]", 28),
+        ("Frieren - 12v2 [1080p]", 12),
+        ("[Group] Spy x Family - 07 [720p]", 7),
+        ("K-On! - 05 [BD]", 5),
+        ("[HorribleSubs] Show Name - 100 [1080p]", 100),
+        ("Mob Psycho 100 - 08 [1080p]", 8),
+        ("Show Episode 12 1080p", 12),
+        ("Show E12 [1080p]", 12),
+        # False positives that must NOT parse as an episode:
+        ("[Group] Attack on Titan 1080p", None),
+        ("[Group] Show Name (2023) 1080p", None),
+        ("[Group] Show - 1080p", None),
+        ("[Group] Fullmetal Alchemist Brotherhood [BD]", None),
+    ],
+)
+def test_parse_absolute_episode(title, expected):
+    assert parsing.parse_absolute_episode(title) == expected
+
+
+@pytest.mark.parametrize(
+    "title,expected",
+    [
+        ("[Group] Frieren (01-28) [1080p][Batch]", (1, 28)),
+        ("[Group] Show 01~12 [BD]", (1, 12)),
+        ("[Group] Show E01-E24", (1, 24)),
+        ("[Group] Show - 12", None),  # single episode, not a range
+    ],
+)
+def test_parse_absolute_range(title, expected):
+    assert parsing.parse_absolute_range(title) == expected
+
+
+def test_matches_episode_absolute():
+    assert parsing.matches_episode_absolute("[SubsPlease] Frieren - 12 (1080p)", 12) is True
+    assert parsing.matches_episode_absolute("[SubsPlease] Frieren - 12 (1080p)", 13) is False
+    # batch/range covers the episode
+    assert parsing.matches_episode_absolute("[Group] Frieren (01-28) [Batch]", 12) is True
+    assert parsing.matches_episode_absolute("[Group] Frieren (01-28) [Batch]", 40) is False
+    # bare batch matches any
+    assert parsing.matches_episode_absolute("[Group] Frieren [Batch]", 5) is True
+    # SxxExx still honoured as season 1
+    assert parsing.matches_episode_absolute("Frieren S01E12", 12) is True
+    assert parsing.matches_episode_absolute("Frieren S02E12", 12) is False
+
+
+def test_title_matches_episode_dispatch():
+    # Absolute release must NOT match under standard SxxExx rules...
+    assert parsing.title_matches_episode("[Group] Show - 12", 1, 12, absolute=False) is False
+    # ...but does when the series is flagged absolute.
+    assert parsing.title_matches_episode("[Group] Show - 12", 1, 12, absolute=True) is True
