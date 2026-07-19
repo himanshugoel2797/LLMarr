@@ -32,6 +32,7 @@ import html
 import json
 import secrets
 import time
+import urllib.parse
 from typing import Optional
 
 import jwt
@@ -231,7 +232,8 @@ class OAuthProvider:
         location = f"{redirect_uri}{sep}code={code}"
         state = form.get("state")
         if state:
-            location += f"&state={html.escape(state, quote=True)}"
+            # URL-encode (not HTML-escape) — this goes in a query string.
+            location += f"&state={urllib.parse.quote(str(state), safe='')}"
         return RedirectResponse(location, status_code=302)
 
     # -- token ------------------------------------------------------------- #

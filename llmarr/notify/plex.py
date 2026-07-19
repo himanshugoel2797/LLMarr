@@ -60,10 +60,16 @@ class PlexNotifier:
             except Exception:  # noqa: BLE001
                 show = None
         if show is None and title:
+            # Search every show-type section (the show may live in an anime
+            # library, not just tv_section).
             try:
-                sec = self.server.library.section(section or self.cfg.tv_section)
-                matches = sec.search(title=title, libtype="show")
-                show = matches[0] if matches else None
+                for sec in self.server.library.sections():
+                    if sec.type != "show":
+                        continue
+                    matches = sec.search(title=title, libtype="show")
+                    if matches:
+                        show = matches[0]
+                        break
             except Exception:  # noqa: BLE001
                 show = None
         if show is None:

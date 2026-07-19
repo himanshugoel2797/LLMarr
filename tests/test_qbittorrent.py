@@ -13,9 +13,13 @@ def test_magnet_hash_case_normalized():
     assert magnet_hash(f"magnet:?xt=urn:btih:{h}") == "a" * 40
 
 
-def test_magnet_hash_base32():
-    h = "A" * 32  # 32-char base32 form
-    assert magnet_hash(f"magnet:?xt=urn:btih:{h}") == h.lower()
+def test_magnet_hash_base32_converted_to_hex():
+    import base64
+    # qBittorrent reports hex infohashes, so a 32-char base32 btih is converted.
+    h32 = "MFRGGZDFMZTWQ2LKNNWG23TPOBYXE43U"  # 20 bytes, valid base32
+    expected = base64.b32decode(h32).hex()
+    assert len(expected) == 40
+    assert magnet_hash(f"magnet:?xt=urn:btih:{h32}") == expected
 
 
 def test_magnet_hash_none_for_plain_url():

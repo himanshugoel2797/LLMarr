@@ -13,6 +13,17 @@ def test_ignored_terms_rejected():
     assert not ok and "cam" in reason
 
 
+def test_ignored_terms_match_whole_word_only():
+    q = QualityConfig()  # default ignored includes "cam", "ts"
+    # These contain "ts"/"cam" as substrings but must NOT be rejected.
+    assert selector.passes(rel("Yellowjackets.S01E01.1080p.WEB-DL"), q)[0]
+    assert selector.passes(rel("The.Batman.2022.1080p.BluRay"), q)[0]
+    assert selector.passes(rel("Ghosts.US.S02E03.720p.HDTV"), q)[0]
+    # But standalone CAM/TS tags are still rejected.
+    assert not selector.passes(rel("The.Batman.2022.CAM.x264"), q)[0]
+    assert not selector.passes(rel("Dune.2024.TS.720p"), q)[0]
+
+
 def test_required_terms_enforced():
     q = QualityConfig(required_terms=["x265"])
     assert not selector.passes(rel("Show.720p.x264"), q)[0]

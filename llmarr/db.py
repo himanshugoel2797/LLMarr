@@ -175,8 +175,11 @@ class Database:
         fields.setdefault("added_at", time.time())
         cols = ", ".join(fields)
         placeholders = ", ".join("?" for _ in fields)
+        # Never overwrite identity/first-add fields on a metadata refresh.
         updates = ", ".join(
-            f"{c}=excluded.{c}" for c in fields if c not in ("provider", "provider_id")
+            f"{c}=excluded.{c}"
+            for c in fields
+            if c not in ("provider", "provider_id", "added_at")
         )
         sql = (
             f"INSERT INTO series ({cols}) VALUES ({placeholders}) "

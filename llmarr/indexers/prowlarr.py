@@ -13,10 +13,8 @@ from typing import Optional
 import httpx
 from pydantic import BaseModel
 
-# Torznab/newznab TV categories.
+# Torznab/newznab categories.
 CAT_TV = 5000
-CAT_TV_HD = 5040
-CAT_TV_SD = 5030
 CAT_MOVIE = 2000
 
 

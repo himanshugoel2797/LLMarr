@@ -48,7 +48,7 @@ class RssPoller:
             while waited < interval and not self._stop.is_set():
                 await asyncio.sleep(min(5, interval - waited))
                 waited += 5
-                if self.app.config.rss.interval_minutes * 60 != interval:
+                if max(1, self.app.config.rss.interval_minutes) * 60 != interval:
                     break  # interval changed — recompute
         log.info("RSS poller stopped")
 

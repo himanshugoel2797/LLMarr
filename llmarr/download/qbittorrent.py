@@ -32,7 +32,17 @@ _COMPLETE_STATES = {
 
 def magnet_hash(url: str) -> Optional[str]:
     m = _MAGNET_HASH.search(url or "")
-    return m.group(1).lower() if m else None
+    if not m:
+        return None
+    h = m.group(1)
+    if len(h) == 40:  # already hex (v1 btih)
+        return h.lower()
+    try:  # 32-char base32 btih → hex, which is what qBittorrent reports
+        import base64
+
+        return base64.b32decode(h.upper()).hex()
+    except Exception:  # noqa: BLE001
+        return h.lower()
 
 
 def _resolve_torrent(url: str):
@@ -52,7 +62,10 @@ def _resolve_torrent(url: str):
                 loc = resp.headers.get("location", "")
                 if loc.startswith("magnet:"):
                     return ("magnet", loc)
-                resp = client.get(loc, follow_redirects=True) if loc else resp
+                if loc:
+                    from urllib.parse import urljoin
+
+                    resp = client.get(urljoin(str(resp.url), loc), follow_redirects=True)
             if resp.status_code == 200 and resp.content[:1] == b"d":
                 return ("file", resp.content)  # bencoded .torrent
     except Exception:  # noqa: BLE001 - fall back to handing the URL to the client
@@ -133,7 +146,10 @@ class QBittorrentClient(DownloadClient):
             save_path=getattr(t, "save_path", None),
             content_path=getattr(t, "content_path", None),
             category=getattr(t, "category", None),
-            completed=(t.state in _COMPLETE_STATES) or float(t.progress) >= 1.0,
+            # Only when a completed torrent has settled (an UP state) — NOT while
+            # qBittorrent is still "moving"/"checking" files, which also report
+            # progress 1.0 and would import from a mid-move path.
+            completed=t.state in _COMPLETE_STATES,
             dl_speed=int(getattr(t, "dlspeed", 0) or 0),
             eta=getattr(t, "eta", None),
             num_seeds=getattr(t, "num_seeds", None),

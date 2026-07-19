@@ -131,17 +131,18 @@ class JikanProvider(MetadataProvider):
             "This is usually transient — try again shortly."
         ) from last_exc
 
-    async def _search(self, query: str, kind: str) -> list[dict]:
+    async def _search(self, query: str, kind: str | None = None) -> list[dict]:
+        params = dict(q=query, limit=15, order_by="members", sort="desc")
+        if kind:
+            params["type"] = kind
         async with httpx.AsyncClient(timeout=25) as client:
-            data = await self._get(
-                client, "/anime", q=query, limit=15, type=kind, order_by="members", sort="desc"
-            )
+            data = await self._get(client, "/anime", **params)
         return data.get("data", [])
 
     async def search_series(self, query: str) -> list[SeriesSearchResult]:
-        # ONA/OVA/special series are common in anime; include the main TV type
-        # plus everything by not over-filtering — MAL relevance ordering handles it.
-        results = await self._search(query, kind="tv")
+        # Don't filter by type — TV/ONA/OVA/special "series" are all common in
+        # anime; MAL relevance ordering surfaces the right one.
+        results = await self._search(query)
         return [
             SeriesSearchResult(
                 provider="jikan",

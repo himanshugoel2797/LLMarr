@@ -18,7 +18,8 @@ CATALOG = [
 
 @pytest.fixture
 def plex_app(app, monkeypatch):
-    app.store.mutate(lambda c: setattr(c.plex, "tv_section", "Anime"))
+    # The "Anime" section is the anime library; imports from it get absolute numbering.
+    app.store.mutate(lambda c: setattr(c.plex, "anime_section", "Anime"))
     monkeypatch.setattr(app, "plex", lambda: FakePlex(catalog_items=CATALOG))
     return app
 
@@ -66,6 +67,15 @@ async def test_media_type_filter(plex_app):
     res = await plex_app.import_from_plex(dry_run=False, media_type="movie")
     assert res["registered"]["movies"] == 2 and res["registered"]["series"] == 0
     assert plex_app.db.list_series() == []
+
+
+async def test_import_marks_existing_missing_movie_downloaded(plex_app):
+    # A movie previously added as missing, then found in Plex, must flip to owned.
+    plex_app.db.upsert_movie(provider="tmdb", provider_id="438631", title="Dune",
+                             year=2021, monitored=1, movie_status="missing")
+    await plex_app.import_from_plex(dry_run=False, sections=["Movies"])
+    m = [x for x in plex_app.db.list_movies() if x["provider_id"] == "438631"][0]
+    assert m["movie_status"] == "downloaded"
 
 
 async def test_reimport_is_idempotent(plex_app):

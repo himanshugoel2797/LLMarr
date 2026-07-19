@@ -97,7 +97,7 @@ class App:
         prov = self.provider(provider)
         info = await prov.get_series(provider_id)
         folder = _folder_name(info.title, info.year)
-        series_id = self.db.upsert_series(
+        fields = dict(
             provider=info.provider,
             provider_id=info.provider_id,
             title=info.title,
@@ -105,11 +105,19 @@ class App:
             overview=info.overview,
             status=info.status,
             poster=info.poster,
-            monitored=1 if monitored else 0,
-            root_folder=root_folder,
             folder_name=folder,
             absolute_numbering=1 if getattr(prov, "absolute_numbering", False) else 0,
         )
+        # monitored / root_folder are user choices — set them only on first add,
+        # not on a metadata refresh (re-add), so re-adding never wipes them.
+        prior = self.db.query_one(
+            "SELECT 1 FROM series WHERE provider=? AND provider_id=?",
+            (info.provider, info.provider_id),
+        )
+        if prior is None:
+            fields["monitored"] = 1 if monitored else 0
+            fields["root_folder"] = root_folder
+        series_id = self.db.upsert_series(**fields)
         # Episodes present before this refresh — their monitored flags (the user's
         # per-season choices) must be preserved; only newly-added episodes get the
         # monitoring rule applied.
@@ -209,6 +217,30 @@ class App:
             self.db.set_episode_status(eid, "grabbed")
         return sorted(covered)
 
+    def reset_grab_to_missing(self, download: dict) -> list:
+        """When a grab is cancelled/failed, put the episodes/movie it covered back
+        to 'missing' (only if still 'grabbed', never touching imported/downloaded)
+        so the RSS poller will try again."""
+        reset = []
+        if download.get("movie_id"):
+            movie = self.db.get_movie(download["movie_id"])
+            if movie and movie["movie_status"] == "grabbed":
+                self.db.set_movie_status(download["movie_id"], "missing")
+                reset.append(("movie", download["movie_id"]))
+        eids = set()
+        if download.get("series_id"):
+            series = self.db.get_series(download["series_id"])
+            if series:
+                eids.update(self._covered_episode_ids(series, download.get("title") or ""))
+        if download.get("episode_id"):
+            eids.add(download["episode_id"])
+        for eid in eids:
+            ep = self.db.get_episode(eid)
+            if ep and ep["status"] == "grabbed":
+                self.db.set_episode_status(eid, "missing")
+                reset.append(("episode", eid))
+        return reset
+
     # -- grabbing ----------------------------------------------------------- #
     async def grab(
         self,
@@ -273,19 +305,30 @@ class App:
     async def refresh_downloads(self, notify: bool = True) -> list[dict]:
         """Poll active grabs, mark completed ones and trigger a Plex scan."""
         updates = []
+        # "completed" is included so an import that failed last time (e.g. a path
+        # mapping not yet fixed) is retried — imports are idempotent.
         pending = [
             d
             for d in self.db.list_downloads()
-            if d["status"] in ("grabbed", "downloading") and d["torrent_hash"]
+            if d["status"] in ("grabbed", "downloading", "completed") and d["torrent_hash"]
         ]
         for d in pending:
             client = self.download_client(d["client"])
             st = await asyncio.to_thread(client.status, d["torrent_hash"])
-            if st is None:
+            if st is None or st.state in ("error", "missingFiles"):
+                # Torrent vanished from the client or errored — fail it and free
+                # its episodes/movie so the RSS poller can try another release.
+                self.db.set_download_status(d["id"], "failed")
+                self.reset_grab_to_missing(d)
+                updates.append({
+                    "download_id": d["id"], "state": "failed",
+                    "reason": "not in client" if st is None else st.state,
+                })
                 continue
             if st.completed:
                 content = st.content_path or st.save_path
-                self.db.set_download_status(d["id"], "completed", save_path=content)
+                # Do NOT mark "completed" before importing — otherwise an import
+                # failure would strand the row out of the retry set.
                 result = {"download_id": d["id"], "state": "completed", "notified": False}
                 section = (
                     self.config.plex.movie_section
@@ -293,6 +336,10 @@ class App:
                     else self.config.plex.tv_section
                 )
                 await self._import_and_notify(d, content, section, result, notify)
+                # _import_and_notify sets "imported" on success; otherwise record
+                # "completed" so it's retried next poll.
+                if self.db.get_download(d["id"])["status"] != "imported":
+                    self.db.set_download_status(d["id"], "completed", save_path=content)
                 updates.append(result)
             elif st.progress > 0:
                 self.db.set_download_status(d["id"], "downloading")
@@ -411,15 +458,16 @@ class App:
                 if not current or current["status"] != "missing":
                     continue
                 checked += 1
+                # Exclude already-seen releases BEFORE ranking, so a seen top pick
+                # doesn't block an available second-best.
                 matching = [
                     r
                     for r in releases
                     if title_matches_episode(r.title, ep["season"], ep["episode"], absolute)
+                    and not self.db.seen_guid(r.guid)
                 ]
                 pick = selector.best(matching, cfg.quality)
                 if not pick or not pick.grab_url:
-                    continue
-                if self.db.seen_guid(pick.guid):
                     continue
                 label = f"{title} S{ep['season']:02d}E{ep['episode']:02d}"
                 if cfg.rss.auto_grab:
@@ -450,8 +498,10 @@ class App:
             except Exception as exc:  # noqa: BLE001
                 candidates.append({"movie": movie["title"], "error": str(exc)})
                 continue
-            pick = selector.best(releases, cfg.quality)
-            if not pick or not pick.grab_url or self.db.seen_guid(pick.guid):
+            pick = selector.best(
+                [r for r in releases if not self.db.seen_guid(r.guid)], cfg.quality
+            )
+            if not pick or not pick.grab_url:
                 continue
             if cfg.rss.auto_grab:
                 res = await self.grab(
@@ -530,9 +580,11 @@ class App:
         plex_title = series["title"]
 
         try:
+            # Activation makes it monitored — otherwise the RSS poller keeps
+            # ignoring it and "activation" grabs nothing.
             self.db.execute(
                 "UPDATE series SET provider=?, provider_id=?, title=?, year=?, overview=?, "
-                "status=?, poster=?, absolute_numbering=? WHERE id=?",
+                "status=?, poster=?, absolute_numbering=?, monitored=1 WHERE id=?",
                 (info.provider, info.provider_id, info.title, info.year, info.overview,
                  info.status, info.poster, 1 if absolute else 0, series_id),
             )
@@ -542,10 +594,18 @@ class App:
                 f"id={info.provider_id}. Remove it or activate that one instead."
             }
 
+        existing = {(e["season"], e["episode"]) for e in self.db.list_episodes(series_id)}
         for ep in info.episodes:
             self.db.upsert_episode(
                 series_id, ep.season, ep.episode, title=ep.title, air_date=ep.air_date
             )
+            # Specials (season 0) off by default, like add_series.
+            if ep.season == 0 and (ep.season, ep.episode) not in existing:
+                row = self.db.query_one(
+                    "SELECT id FROM episodes WHERE series_id=? AND season=0 AND episode=?",
+                    (series_id, ep.episode),
+                )
+                self.db.execute("UPDATE episodes SET monitored=0 WHERE id=?", (row["id"],))
 
         marked = 0
         if mark_downloaded and self.config.plex.url and self.config.plex.token:
@@ -596,7 +656,7 @@ class App:
         names (e.g. exclude an "AV" section). Series are catalogued without
         episodes — activate monitoring for one via add_series with a provider id."""
         items = await asyncio.to_thread(self.plex().catalog)
-        anime_section = self.config.plex.tv_section
+        anime_section = self.config.plex.anime_section  # None = flag nothing
         # Report what's available so the caller can pick sections on a dry run.
         by_section: dict[str, int] = {}
         for it in items:
@@ -627,11 +687,14 @@ class App:
 
             folder = _folder_name(it["title"], it["year"])
             if it["type"] == "movie":
-                self.db.upsert_movie(
+                mid = self.db.upsert_movie(
                     provider=provider, provider_id=str(pid), title=it["title"],
                     year=it["year"], monitored=1 if monitored else 0,
                     folder_name=folder, movie_status="downloaded",
                 )
+                # upsert_movie doesn't update movie_status on conflict; a movie
+                # already tracked as 'missing' is owned in Plex — mark it so.
+                self.db.set_movie_status(mid, "downloaded")
                 counts["movies"] += 1
             else:
                 self.db.upsert_series(

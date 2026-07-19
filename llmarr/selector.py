@@ -8,6 +8,8 @@ preference, preferred terms and seeder count.
 
 from __future__ import annotations
 
+import re
+
 from .config import QualityConfig
 from .indexers.prowlarr import Release
 from .parsing import parse_resolution
@@ -17,13 +19,19 @@ def _title_has(title: str, term: str) -> bool:
     return term.lower() in title.lower()
 
 
+def _has_word(title: str, term: str) -> bool:
+    """Whole-token match so a required/ignored term like 'ts' or 'cam' doesn't
+    fire on 'Yellowjackets' / 'Camelot'."""
+    return re.search(rf"(?<![a-z0-9]){re.escape(term.lower())}(?![a-z0-9])", title.lower()) is not None
+
+
 def passes(release: Release, q: QualityConfig) -> tuple[bool, str]:
     title = release.title
     for term in q.ignored_terms:
-        if term and _title_has(title, term):
+        if term and _has_word(title, term):
             return False, f"contains ignored term '{term}'"
     for term in q.required_terms:
-        if term and not _title_has(title, term):
+        if term and not _has_word(title, term):
             return False, f"missing required term '{term}'"
     if release.seeders is not None and release.seeders < q.min_seeders:
         return False, f"seeders {release.seeders} < min {q.min_seeders}"

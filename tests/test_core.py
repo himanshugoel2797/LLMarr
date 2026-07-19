@@ -159,6 +159,49 @@ async def test_readd_series_applies_rule_to_new_episodes(app, fakes, monkeypatch
     assert mon[(1, 1)] == 1 and mon[(2, 1)] == 0  # new S2 ep not monitored (not in seasons)
 
 
+async def test_readd_series_preserves_monitored_and_root_folder(app, fakes, monkeypatch):
+    info = SeriesInfo(provider="tmdb", provider_id="1", title="Show", seasons=[1],
+                      episodes=[EpisodeInfo(season=1, episode=1)])
+    monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](series_info=info))
+    r = await app.add_series("1", monitored=False, root_folder="tv-4k")
+    sid = r["id"]
+    assert app.db.get_series(sid)["monitored"] == 0
+    # metadata refresh (re-add with defaults) must NOT reset these
+    await app.add_series("1")
+    row = app.db.get_series(sid)
+    assert row["monitored"] == 0 and row["root_folder"] == "tv-4k"
+
+
+def test_reset_grab_to_missing(app):
+    sid = app.db.upsert_series(provider="tmdb", provider_id="1", title="Show")
+    e1 = app.db.upsert_episode(sid, 1, 1)
+    e2 = app.db.upsert_episode(sid, 1, 2)
+    app.db.set_episode_status(e1, "grabbed")
+    app.db.set_episode_status(e2, "downloaded")  # already imported — must NOT reset
+    download = {"series_id": sid, "episode_id": e1, "movie_id": None, "title": "Show.S01E01"}
+    app.reset_grab_to_missing(download)
+    assert app.db.get_episode(e1)["status"] == "missing"
+    assert app.db.get_episode(e2)["status"] == "downloaded"
+
+
+async def test_rss_picks_second_best_when_top_seen(configured, fakes, monkeypatch):
+    app = configured
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
+    # Top pick (more seeders) already seen; a second matching release is fresh.
+    rels = [
+        fakes["make_release"]("Show.S01E01.1080p.WEB", guid="seen", seeders=500),
+        fakes["make_release"]("Show.S01E01.1080p.WEBRip", guid="fresh", seeders=50),
+    ]
+    monkeypatch.setattr(app, "prowlarr", lambda: fakes["Prowlarr"](releases=rels))
+    app.db.record_guid("seen")
+    sid = app.db.upsert_series(provider="tmdb", provider_id="1", title="Show", monitored=1)
+    e = app.db.upsert_episode(sid, 1, 1)
+    app.db.execute("UPDATE episodes SET monitored=1 WHERE id=?", (e,))
+    result = await app.rss_poll()
+    assert len(result["grabbed"]) == 1
+    assert result["grabbed"][0]["release"] == "Show.S01E01.1080p.WEBRip"  # the unseen one
+
+
 async def test_add_movie(app, fakes, monkeypatch):
     info = MovieInfo(provider="tmdb", provider_id="9", title="Dune", year=2021)
     monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](movie_info=info))

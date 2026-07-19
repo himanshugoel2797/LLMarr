@@ -67,6 +67,9 @@ class PlexConfig(BaseModel):
     # Library section name to scan after a TV grab lands.
     tv_section: str = "TV Shows"
     movie_section: str = "Movies"
+    # Optional: the Plex section that holds anime — items imported from it are
+    # flagged for absolute (anime) numbering. Unset = don't flag anything.
+    anime_section: Optional[str] = None
 
 
 class PathMapping(BaseModel):
@@ -125,7 +128,7 @@ class QualityConfig(BaseModel):
 
 class RssConfig(BaseModel):
     enabled: bool = True
-    interval_minutes: int = 30
+    interval_minutes: int = Field(default=30, ge=1)
     # Grab automatically when a monitored+missing episode is matched, otherwise
     # only record candidates for the LLM to review.
     auto_grab: bool = True

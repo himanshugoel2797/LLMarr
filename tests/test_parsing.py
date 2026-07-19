@@ -25,6 +25,8 @@ def test_parse_episode(title, expected):
         ("Show Season 2 1080p", 2),
         ("Show.S03E04.1080p", None),  # single episode, not a pack
         ("Show 1x05", None),
+        ("Show.2024.1080p.BluRay.DTS5.1.x264-GRP", None),  # audio tag, not season 5
+        ("Movie.2024.1080p.WEB-DL-GROUPS3", None),  # group name, not season 3
     ],
 )
 def test_parse_season_pack(title, expected):

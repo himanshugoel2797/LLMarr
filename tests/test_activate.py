@@ -41,9 +41,10 @@ async def test_activate_absolute_marks_present_episodes(plex_configured, fakes, 
     assert res["episodes"] == 28
     assert res["marked_downloaded"] == 12
     assert res["still_missing"] == 16
-    # series re-keyed to the metadata provider
+    # series re-keyed to the metadata provider AND now monitored
     row = app.db.get_series(sid)
     assert row["provider"] == "jikan" and row["provider_id"] == "52991"
+    assert row["monitored"] == 1
     # episodes 1..12 downloaded, 13..28 missing
     eps = {e["episode"]: e["status"] for e in app.db.list_episodes(sid)}
     assert eps[12] == "downloaded" and eps[13] == "missing"

@@ -244,8 +244,11 @@ def configure_plex(
     token: Optional[str] = None,
     tv_section: Optional[str] = None,
     movie_section: Optional[str] = None,
+    anime_section: Optional[str] = None,
 ) -> dict:
-    """Configure the Plex connection and library section names."""
+    """Configure the Plex connection and library section names. ``anime_section``
+    (optional) marks a section whose imported shows use absolute (anime)
+    numbering; pass "" to clear it."""
     def _m(c):
         _set_opt(c.plex, "url", url)
         _set_opt(c.plex, "token", token)
@@ -253,6 +256,7 @@ def configure_plex(
             c.plex.tv_section = tv_section
         if movie_section:
             c.plex.movie_section = movie_section
+        _set_opt(c.plex, "anime_section", anime_section)
     app().store.mutate(_m)
     return app().store.redacted()["plex"]
 
@@ -436,19 +440,16 @@ def configure_server(
     build OAuth endpoints; leave unset to derive it from the request.
     ``allowed_hosts`` lists external hostnames to trust for the Host-header check
     behind a tunnel/proxy. All take effect on the next HTTP server restart."""
-    if auth_mode is not None and auth_mode not in ("token", "oauth", "none"):
-        return {"error": "auth_mode must be one of: token, oauth, none"}
     def _m(c):
         if single_host is not None:
             c.single_host = single_host
-        if require_auth is not None:
-            c.server.require_auth = require_auth
+        # auth_mode implies require_auth; apply it FIRST so an explicit
+        # require_auth in the same call wins.
         if auth_mode is not None:
             c.server.auth_mode = auth_mode
-            if auth_mode == "none":
-                c.server.require_auth = False
-            else:
-                c.server.require_auth = True
+            c.server.require_auth = auth_mode != "none"
+        if require_auth is not None:
+            c.server.require_auth = require_auth
         _set_opt(c.server, "public_url", public_url)
         if allowed_hosts is not None:
             c.server.allowed_hosts = allowed_hosts
@@ -748,6 +749,8 @@ async def grab_movie(movie_id: int, client_name: Optional[str] = None) -> dict:
     if not movie:
         return {"error": f"No movie with id {movie_id}"}
     result = await search_movie_releases(movie_id)
+    if "error" in result:
+        return result  # propagate a Prowlarr outage, don't mask it
     releases = result.get("releases", [])
     if not releases:
         return {"error": "No releases found", "movie": movie["title"]}
@@ -756,6 +759,8 @@ async def grab_movie(movie_id: int, client_name: Optional[str] = None) -> dict:
         best["grab_url"],
         title=best["title"],
         movie_id=movie_id,
+        indexer=best.get("indexer"),
+        guid=best.get("guid"),
         client_name=client_name,
     )
     return {"picked": best, **grab}
@@ -871,6 +876,8 @@ async def grab_episode(
         title=best["title"],
         series_id=series_id,
         episode_id=ep["id"] if ep else None,
+        indexer=best.get("indexer"),
+        guid=best.get("guid"),
         client_name=client_name,
     )
     return {"picked": best, **grab}
@@ -962,7 +969,9 @@ async def remove_download(download_id: int, delete_files: bool = False) -> dict:
             app().download_client(d["client"]).remove, d["torrent_hash"], delete_files
         )
     app().db.set_download_status(download_id, "removed")
-    return {"removed": download_id}
+    # Put its episodes/movie back to 'missing' so RSS can re-grab.
+    reset = app().reset_grab_to_missing(d)
+    return {"removed": download_id, "reset_to_missing": len(reset)}
 
 
 # --------------------------------------------------------------------------- #

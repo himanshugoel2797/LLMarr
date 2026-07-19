@@ -8,8 +8,9 @@ from typing import Optional
 # S01E02, s1e2, 1x02
 _SXXEXX = re.compile(r"[Ss](\d{1,2})[\. _-]?[Ee](\d{1,3})")
 _NxNN = re.compile(r"(?<![\dA-Za-z])(\d{1,2})[xX](\d{1,3})(?![\d])")
-# Whole-season packs: "Season 1", "S01" with no episode, "Complete"
-_SEASON_ONLY = re.compile(r"[Ss](?:eason[ ._-]?)?(\d{1,2})(?![Ee\dxX])")
+# Whole-season packs: "Season 1", "S01" with no episode, "Complete". The boundary
+# before S keeps audio tags like "DTS5.1" (T precedes S) from parsing as "Season 5".
+_SEASON_ONLY = re.compile(r"(?<![A-Za-z0-9])[Ss](?:eason[ ._-]?)?(\d{1,2})(?![Ee\dxX])")
 
 _RES = re.compile(r"\b(2160p|1080p|720p|480p|4k)\b", re.IGNORECASE)
 
@@ -21,9 +22,13 @@ _RES = re.compile(r"\b(2160p|1080p|720p|480p|4k)\b", re.IGNORECASE)
 _ABS_EPWORD = re.compile(r"\b(?:episode|ep)\.?[\s._]*(\d{1,4})\b", re.IGNORECASE)
 _ABS_E = re.compile(r"(?:^|[\s._])E(\d{1,3})(?![\dp])", re.IGNORECASE)
 # A dash used as a token separator (space/dot/underscore on its left), then the
-# number, optional "v2" version, not followed by another digit or a 'p'
-# (so " - 1080p" resolutions are excluded).
-_ABS_DASH = re.compile(r"[\s._][-–][\s._]*(\d{1,4})(?:v\d+)?(?![\dp])", re.IGNORECASE)
+# number, optional "v2" version, not followed by another digit, a 'p'
+# (resolutions) or ".5" (fractional/half specials).
+_ABS_DASH = re.compile(r"[\s._][-–][\s._]*(\d{1,4})(?:v\d+)?(?![\dp])(?!\.\d)", re.IGNORECASE)
+
+
+def _not_year(n: int) -> bool:
+    return not (1900 <= n <= 2100)
 # Batch/range: "(01-28)", "01~28", "E01-E12".
 _ABS_RANGE = re.compile(
     r"(?:^|[\s._\[\(])E?(\d{1,4})[\s._]*[-~][\s._]*E?(\d{1,4})(?=[\s._\]\)v]|$)"
@@ -76,10 +81,10 @@ def parse_absolute_episode(title: str) -> Optional[int]:
     """Return the absolute episode number from an anime-style release/filename,
     e.g. ``[Group] Show - 12 [1080p]`` → 12. ``None`` if none is found."""
     for rx in (_ABS_EPWORD, _ABS_E, _ABS_DASH):
-        matches = rx.findall(title)
-        if matches:
-            # The episode number is the last such token (name may contain others).
-            return int(matches[-1])
+        # Drop year-like values (a "- 2023" release-year token isn't an episode).
+        nums = [n for n in (int(m) for m in rx.findall(title)) if _not_year(n)]
+        if nums:
+            return nums[-1]  # the episode number is the last such token
     return None
 
 
@@ -94,6 +99,8 @@ def parse_absolute_range(title: str) -> Optional[tuple[int, int]]:
         start, end = int(m.group(1)), int(m.group(2))
         if not (0 < start < end and end - start <= 400):
             continue
+        if not _not_year(start) and not _not_year(end):
+            continue  # a "2019-2020" year span, not an episode range
         if _SEASON_SPAN.search(title[: m.start() + 1]):
             continue  # preceded by "Season" — a season span, not episodes
         return start, end
