@@ -11,6 +11,14 @@ server:
   # auto-generated on first HTTP start if left null. stdio needs no token.
   auth_token: null
   require_auth: true
+  # "token" (static bearer, default) | "oauth" (OAuth 2.1 + PKCE, needed by
+  # claude.ai custom connectors / mobile apps) | "none".
+  auth_mode: token
+  # External base URL, needed in oauth mode to build endpoint URLs. If null it is
+  # derived from the request Host + X-Forwarded-Proto (fine behind a tunnel).
+  public_url: null
+  # oauth_signing_key is generated automatically on first oauth start.
+  oauth_signing_key: null
 
 metadata:
   provider: tmdb

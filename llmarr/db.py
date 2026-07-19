@@ -92,6 +92,14 @@ CREATE TABLE IF NOT EXISTS kv (
     key           TEXT PRIMARY KEY,
     value         TEXT
 );
+
+-- OAuth clients registered dynamically (RFC 7591) by MCP clients like claude.ai.
+CREATE TABLE IF NOT EXISTS oauth_clients (
+    client_id     TEXT PRIMARY KEY,
+    client_name   TEXT,
+    redirect_uris TEXT NOT NULL,   -- JSON array
+    created_at    REAL NOT NULL
+);
 """
 
 
@@ -324,3 +332,14 @@ class Database:
             "INSERT OR IGNORE INTO grab_history(guid, grabbed_at) VALUES(?, ?)",
             (guid, time.time()),
         )
+
+    # -- oauth clients ------------------------------------------------------ #
+    def add_oauth_client(self, client_id: str, client_name: str, redirect_uris: str) -> None:
+        self.execute(
+            "INSERT OR REPLACE INTO oauth_clients(client_id, client_name, redirect_uris, created_at) "
+            "VALUES(?, ?, ?, ?)",
+            (client_id, client_name, redirect_uris, time.time()),
+        )
+
+    def get_oauth_client(self, client_id: str) -> Optional[dict]:
+        return self.query_one("SELECT * FROM oauth_clients WHERE client_id=?", (client_id,))

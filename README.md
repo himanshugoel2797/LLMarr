@@ -104,6 +104,30 @@ dance.
   tools, or set your own value in `config.yaml`. Disable auth entirely (e.g.
   behind your own reverse proxy) with `configure_server(require_auth=false)`.
 
+### OAuth mode (for claude.ai custom connectors / mobile apps)
+
+claude.ai custom connectors — and therefore the Claude iOS/Android apps —
+authenticate with **OAuth 2.1**, not a static header. LLMarr can act as its own
+OAuth authorization server for this:
+
+```
+configure_server(auth_mode="oauth", public_url="https://arr.example.com")
+# then restart the HTTP server
+```
+
+The flow keeps the single-login idea: when Claude sends you to the authorize
+page, you **enter the same LLMarr token** to approve. Under the hood LLMarr
+implements dynamic client registration (RFC 7591), discovery metadata (RFC
+8414 + 9728), authorization-code + PKCE (S256), and refresh tokens — all signed
+JWTs, no external identity provider. The static token still works as a direct
+bearer header too, so Claude Code keeps connecting unchanged.
+
+To add it on mobile: claude.ai → **Settings → Connectors → Add custom
+connector**, URL `https://arr.example.com/mcp`. Claude discovers the OAuth
+endpoints automatically; approve with your token. `oauth_info` prints the exact
+URLs. `public_url` must be set (or derivable from the request) so the issued
+endpoint URLs are correct.
+
 ## Remote access via Cloudflare Tunnel
 
 The HTTP server's MCP endpoint is at **`/mcp`**. Cloudflare terminates TLS and
@@ -218,7 +242,7 @@ scan the Plex movie section.
 | Area | Tools |
 | --- | --- |
 | Config | `get_config`, `configure_metadata`, `configure_prowlarr`, `configure_download_client`, `configure_plex`, `configure_root_folder`, `configure_quality`, `configure_rss`, `configure_import` |
-| Server / auth | `configure_server`, `get_auth_token`, `set_auth_token`, `rotate_auth_token` |
+| Server / auth | `configure_server`, `get_auth_token`, `set_auth_token`, `rotate_auth_token`, `oauth_info` |
 | Path maps | `add_path_mapping`, `list_path_mappings`, `remove_path_mapping`, `translate_path` |
 | Diagnostics | `test_connections` |
 | Series | `search_series`, `add_series`, `list_series`, `get_series`, `list_episodes`, `set_monitored`, `remove_series` |

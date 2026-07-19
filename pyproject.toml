@@ -27,6 +27,7 @@ dependencies = [
     "feedparser>=6.0",
     "starlette>=0.37",
     "uvicorn>=0.30",
+    "pyjwt>=2.8",
 ]
 
 [project.optional-dependencies]

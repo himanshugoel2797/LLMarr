@@ -13,8 +13,10 @@ import sys
 
 
 def _run_http() -> None:
-    from .auth import BearerAuthMiddleware, ensure_token
+    from .auth import AuthMiddleware, effective_mode, ensure_token
     from .config import ConfigStore
+    from .db import Database
+    from .oauth import OAuthProvider
     from .server import mcp
 
     if os.environ.get("LLMARR_HOST"):
@@ -43,27 +45,20 @@ def _run_http() -> None:
         )
 
     app = mcp.streamable_http_app()
-
     host, port = mcp.settings.host, mcp.settings.port
-    if store.config.server.require_auth:
+    mode = effective_mode(sc)
+
+    oauth_provider = None
+    if mode != "none":
         token = ensure_token(store)
-        app.add_middleware(BearerAuthMiddleware, token=token)
-        print(
-            "\n".join(
-                [
-                    "",
-                    "=" * 68,
-                    " LLMarr HTTP transport — authentication is ON",
-                    f"   URL:   http://{host}:{port}{mcp.settings.streamable_http_path}",
-                    f"   Token: {token}",
-                    "   Send it on every request:  Authorization: Bearer <token>",
-                    "   (rotate with the rotate_auth_token tool)",
-                    "=" * 68,
-                    "",
-                ]
-            ),
-            file=sys.stderr,
-        )
+        if mode == "oauth":
+            oauth_provider = OAuthProvider(
+                store, Database(), mcp_path=mcp.settings.streamable_http_path
+            )
+            oauth_provider.signing_key()  # generate + persist on first run
+            oauth_provider.mount(app)
+        app.add_middleware(AuthMiddleware, store=store, oauth_provider=oauth_provider)
+        _print_banner(mode, host, port, mcp.settings.streamable_http_path, token, sc)
     else:
         print(
             "WARNING: LLMarr HTTP transport is running WITHOUT authentication "
@@ -74,6 +69,32 @@ def _run_http() -> None:
     import uvicorn
 
     uvicorn.run(app, host=host, port=port, log_level="info")
+
+
+def _print_banner(mode, host, port, path, token, sc) -> None:
+    lines = [
+        "",
+        "=" * 70,
+        f" LLMarr HTTP transport — auth mode: {mode.upper()}",
+        f"   Local URL:  http://{host}:{port}{path}",
+    ]
+    public = sc.public_url.rstrip("/") if sc.public_url else None
+    if mode == "oauth":
+        base = public or "https://<your-public-url>"
+        lines += [
+            f"   Public:     {base}{path}",
+            "   OAuth is ON — add this as a claude.ai custom connector; on the",
+            "   authorize page enter the token below to approve access:",
+            f"   Token:      {token}",
+            "   (Claude Code / static clients may still use it as a bearer header.)",
+        ]
+    else:
+        lines += [
+            f"   Token:      {token}",
+            "   Send it on every request:  Authorization: Bearer <token>",
+        ]
+    lines += ["   (rotate with the rotate_auth_token tool)", "=" * 70, ""]
+    print("\n".join(lines), file=sys.stderr)
 
 
 def main() -> None:

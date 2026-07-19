@@ -149,6 +149,18 @@ class ServerConfig(BaseModel):
 
     auth_token: Optional[str] = None
     require_auth: bool = True
+    # "token" = static bearer token (default; used by Claude Code and simple
+    # clients). "oauth" = full OAuth 2.1 authorization-code + PKCE flow, required
+    # by claude.ai custom connectors (and hence the mobile apps). "none" is also
+    # reachable via require_auth=false. In oauth mode the static token still works
+    # as a direct bearer *and* as the credential entered on the authorize page.
+    auth_mode: Literal["token", "oauth", "none"] = "token"
+    # External base URL (e.g. https://arr.example.com) used to build OAuth issuer
+    # and endpoint URLs. If unset, it is derived from the request's Host and
+    # X-Forwarded-Proto — correct for a standard tunnel/reverse-proxy setup.
+    public_url: Optional[str] = None
+    # HS256 signing key for OAuth tokens; generated once on first oauth start.
+    oauth_signing_key: Optional[str] = None
     # MCP's DNS-rebinding protection only trusts localhost by default, which
     # rejects access through a tunnel/reverse proxy with "Invalid Host header".
     # List the external hostnames to trust (e.g. "arr.example.com"). Left empty,
@@ -180,7 +192,9 @@ class Config(BaseModel):
 # --------------------------------------------------------------------------- #
 # Persistence
 # --------------------------------------------------------------------------- #
-_SECRET_KEYS = {"api_key", "tmdb_api_key", "password", "token", "auth_token"}
+_SECRET_KEYS = {
+    "api_key", "tmdb_api_key", "password", "token", "auth_token", "oauth_signing_key",
+}
 
 
 def default_config_path() -> Path:

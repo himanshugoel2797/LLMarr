@@ -54,9 +54,16 @@ tool functions, so it's reachable from both and testable without the MCP layer.
   `importer.work_context` (default `"local"`) — the namespace LLMarr itself can
   read/write. Hardlinks need the download dir and library root on the same
   filesystem *in that context*.
-- **Auth = one static bearer token**, HTTP transport only (stdio is local/trusted).
-  Auto-generated + persisted on first HTTP start, printed to stderr, reused
-  across restarts. Deliberately NOT OAuth — this is a single-user homelab tool.
+- **Auth modes** (`server.auth_mode`, HTTP transport only; stdio is trusted):
+  `token` (static bearer, default), `oauth` (full OAuth 2.1 + PKCE for claude.ai
+  connectors / mobile), `none`. The static token is auto-generated + persisted on
+  first HTTP start. `auth.py` `AuthMiddleware` is the mode-aware guard; in oauth
+  mode it accepts EITHER the static token OR an OAuth JWT, so Claude Code keeps
+  working. `oauth.py` is a self-contained authorization server (DCR, discovery
+  metadata, authorize page that reuses the static token as the approval
+  credential, token endpoint, JWT access/refresh) — no external IdP. Tokens are
+  HS256 JWTs signed with `server.oauth_signing_key`; only the single-use auth-code
+  jti set is in-memory. `public_url` (or request-derived) builds endpoint URLs.
 - **Quality selection is a heuristic**, not custom formats: hard filters
   (ignored/required terms, seeders, size) then rank by resolution/preferred
   terms/seeders. Keep it predictable.

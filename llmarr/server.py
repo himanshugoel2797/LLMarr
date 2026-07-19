@@ -309,21 +309,35 @@ def configure_rss(
 def configure_server(
     single_host: Optional[bool] = None,
     require_auth: Optional[bool] = None,
+    auth_mode: Optional[str] = None,
+    public_url: Optional[str] = None,
     allowed_hosts: Optional[list[str]] = None,
     allowed_origins: Optional[list[str]] = None,
 ) -> dict:
     """Set deployment mode. ``single_host=true`` (default) means LLMarr,
     qBittorrent and Plex share the same filesystem paths, so no path mappings are
     needed; set it false for a split-container setup and define path mappings.
-    ``require_auth`` toggles bearer-token auth on the HTTP transport.
+    ``auth_mode`` is ``token`` (static bearer, default), ``oauth`` (OAuth 2.1 +
+    PKCE, required by claude.ai custom connectors / mobile apps), or ``none``.
+    ``public_url`` is the external base URL (e.g. https://arr.example.com) used to
+    build OAuth endpoints; leave unset to derive it from the request.
     ``allowed_hosts`` lists external hostnames to trust for the Host-header check
-    when running behind a tunnel/proxy (empty disables the check). All take effect
-    on the next HTTP server restart."""
+    behind a tunnel/proxy. All take effect on the next HTTP server restart."""
+    if auth_mode is not None and auth_mode not in ("token", "oauth", "none"):
+        return {"error": "auth_mode must be one of: token, oauth, none"}
     def _m(c):
         if single_host is not None:
             c.single_host = single_host
         if require_auth is not None:
             c.server.require_auth = require_auth
+        if auth_mode is not None:
+            c.server.auth_mode = auth_mode
+            if auth_mode == "none":
+                c.server.require_auth = False
+            else:
+                c.server.require_auth = True
+        if public_url is not None:
+            c.server.public_url = public_url
         if allowed_hosts is not None:
             c.server.allowed_hosts = allowed_hosts
         if allowed_origins is not None:
@@ -333,8 +347,30 @@ def configure_server(
     return {
         "single_host": c.single_host,
         "require_auth": c.server.require_auth,
+        "auth_mode": c.server.auth_mode,
+        "public_url": c.server.public_url,
         "allowed_hosts": c.server.allowed_hosts,
         "allowed_origins": c.server.allowed_origins,
+    }
+
+
+@mcp.tool()
+def oauth_info() -> dict:
+    """Show the OAuth endpoint URLs to expect once the server runs in ``oauth``
+    mode, for adding LLMarr as a claude.ai custom connector. Requires
+    ``public_url`` (or knowing your external URL). The connector URL is the
+    ``resource`` value; approve access on the authorize page with your token."""
+    sc = app().config.server
+    base = (sc.public_url or "https://<your-public-url>").rstrip("/")
+    return {
+        "auth_mode": sc.auth_mode,
+        "connector_url": base + "/mcp",
+        "issuer": base,
+        "authorization_endpoint": base + "/authorize",
+        "token_endpoint": base + "/token",
+        "registration_endpoint": base + "/register",
+        "protected_resource_metadata": base + "/.well-known/oauth-protected-resource",
+        "note": "Enter your LLMarr auth token on the authorize page to approve.",
     }
 
 
