@@ -92,6 +92,102 @@ async def test_rss_poll_anime_release_ignored_for_standard_series(configured, fa
     assert result["grabbed"] == []  # absolute matching not applied to standard TV
 
 
+# --------------------------------------------------------------------------- #
+# quality upgrades (G4)
+# --------------------------------------------------------------------------- #
+def _downloaded_episode(app, quality="720p"):
+    sid = app.db.upsert_series(provider="tmdb", provider_id="1", title="Show", monitored=1)
+    e = app.db.upsert_episode(sid, 1, 1)
+    app.db.execute("UPDATE episodes SET monitored=1 WHERE id=?", (e,))
+    app.db.set_episode_status(e, "downloaded", "/lib/Show/S01E01.mkv", quality=quality)
+    return sid, e
+
+
+async def test_rss_poll_upgrades_downloaded_episode(configured, fakes, monkeypatch):
+    app = configured
+    app.store.mutate(lambda c: setattr(c.quality, "upgrade_until", "1080p"))
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
+    rels = [fakes["make_release"]("Show.S01E01.1080p.WEB-DL", guid="u1", seeders=50)]
+    monkeypatch.setattr(app, "prowlarr", lambda: fakes["Prowlarr"](releases=rels))
+    sid, e = _downloaded_episode(app, "720p")
+
+    result = await app.rss_poll()
+
+    assert len(result["upgraded"]) == 1
+    assert result["upgraded"][0]["to_quality"] == "1080p"
+    # The episode stays 'downloaded' while the upgrade downloads (mark_status=False).
+    assert app.db.get_episode(e)["status"] == "downloaded"
+    # The grab is flagged as an upgrade.
+    dl = app.db.list_downloads()[0]
+    assert dl["is_upgrade"] == 1 and dl["episode_id"] == e
+
+
+async def test_rss_poll_no_upgrade_when_disabled(configured, fakes, monkeypatch):
+    app = configured  # upgrade_until unset by default
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
+    rels = [fakes["make_release"]("Show.S01E01.1080p.WEB-DL", guid="u1")]
+    monkeypatch.setattr(app, "prowlarr", lambda: fakes["Prowlarr"](releases=rels))
+    _downloaded_episode(app, "720p")
+
+    result = await app.rss_poll()
+    assert result["upgraded"] == []
+    assert app.db.list_downloads() == []
+
+
+async def test_rss_poll_upgrade_ignores_season_pack(configured, fakes, monkeypatch):
+    """An upgrade must not grab a whole season pack for one episode."""
+    app = configured
+    app.store.mutate(lambda c: setattr(c.quality, "upgrade_until", "1080p"))
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
+    rels = [fakes["make_release"]("Show.S01.1080p.COMPLETE", guid="p1")]
+    monkeypatch.setattr(app, "prowlarr", lambda: fakes["Prowlarr"](releases=rels))
+    _downloaded_episode(app, "720p")
+
+    result = await app.rss_poll()
+    assert result["upgraded"] == []
+
+
+async def test_rss_poll_upgrade_guarded_while_in_flight(configured, fakes, monkeypatch):
+    app = configured
+    app.store.mutate(lambda c: setattr(c.quality, "upgrade_until", "1080p"))
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
+    rels = [fakes["make_release"]("Show.S01E01.1080p.WEB-DL", guid="u1")]
+    monkeypatch.setattr(app, "prowlarr", lambda: fakes["Prowlarr"](releases=rels))
+    sid, e = _downloaded_episode(app, "720p")
+    # An upgrade is already downloading for this episode.
+    app.db.add_download(title="prev", episode_id=e, is_upgrade=1, status="downloading",
+                        torrent_hash="h")
+
+    result = await app.rss_poll()
+    assert result["upgraded"] == []
+
+
+async def test_rss_poll_upgrade_stops_at_cutoff(configured, fakes, monkeypatch):
+    app = configured
+    app.store.mutate(lambda c: setattr(c.quality, "upgrade_until", "1080p"))
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
+    rels = [fakes["make_release"]("Show.S01E01.2160p.WEB-DL", guid="u1")]
+    monkeypatch.setattr(app, "prowlarr", lambda: fakes["Prowlarr"](releases=rels))
+    # Already at the cutoff — a 2160p release above it must be ignored.
+    _downloaded_episode(app, "1080p")
+
+    result = await app.rss_poll()
+    assert result["upgraded"] == []
+
+
+async def test_grab_upgrade_does_not_flip_status(configured, fakes, monkeypatch):
+    app = configured
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
+    sid, e = _downloaded_episode(app, "720p")
+
+    res = await app.grab(
+        "magnet:?x", title="Show.S01E01.1080p", series_id=sid, episode_id=e,
+        is_upgrade=True, mark_status=False,
+    )
+    assert app.db.get_episode(e)["status"] == "downloaded"  # unchanged
+    assert app.db.get_download(res["download_id"])["is_upgrade"] == 1
+
+
 async def test_add_series_specials_unmonitored_by_default(app, fakes, monkeypatch):
     info = SeriesInfo(
         provider="tmdb", provider_id="1", title="Show", seasons=[0, 1],
@@ -575,6 +671,62 @@ async def test_refresh_downloading_not_completed(configured, fakes, monkeypatch)
     updates = await app.refresh_downloads()
     assert updates[0]["state"] == "downloading"
     assert app.db.get_download(did)["status"] == "downloading"
+
+
+async def test_refresh_imports_completed_upgrade(import_ready, fakes, monkeypatch):
+    app, dl, lib = import_ready
+    (dl / "Show.S01E01.1080p.mkv").write_text("y" * 2000)
+    monkeypatch.setattr(
+        core, "get_client",
+        lambda cfg: fakes["DownloadClient"](complete=True,
+                                            content_path="/downloads/Show.S01E01.1080p.mkv"),
+    )
+    monkeypatch.setattr(app, "plex", lambda: fakes["Plex"]())
+    sid = app.db.upsert_series(
+        provider="tmdb", provider_id="1", title="Show", year=2020,
+        root_folder="tv", folder_name="Show (2020)",
+    )
+    e = app.db.upsert_episode(sid, 1, 1, title="Pilot")
+    # Pretend a 720p copy is already in the library.
+    app.db.set_episode_status(e, "downloaded", str(lib / "old.mkv"), quality="720p")
+    did = app.db.add_download(
+        series_id=sid, episode_id=e, title="Show.S01E01.1080p", torrent_hash="h",
+        client="qbit", is_upgrade=1, quality="1080p",
+    )
+
+    await app.refresh_downloads()
+    assert app.db.get_download(did)["status"] == "imported"
+    assert app.db.get_episode(e)["quality"] == "1080p"
+    assert app.db.get_episode(e)["status"] == "downloaded"
+
+
+async def test_refresh_fails_upgrade_that_is_not_better(import_ready, fakes, monkeypatch):
+    app, dl, lib = import_ready
+    (dl / "Show.S01E01.720p.mkv").write_text("y" * 2000)
+    monkeypatch.setattr(
+        core, "get_client",
+        lambda cfg: fakes["DownloadClient"](complete=True,
+                                            content_path="/downloads/Show.S01E01.720p.mkv"),
+    )
+    monkeypatch.setattr(app, "plex", lambda: fakes["Plex"]())
+    sid = app.db.upsert_series(
+        provider="tmdb", provider_id="1", title="Show", year=2020,
+        root_folder="tv", folder_name="Show (2020)",
+    )
+    e = app.db.upsert_episode(sid, 1, 1)
+    app.db.set_episode_status(e, "downloaded", str(lib / "old.mkv"), quality="1080p")
+    did = app.db.add_download(
+        series_id=sid, episode_id=e, title="Show.S01E01.720p", torrent_hash="h",
+        client="qbit", is_upgrade=1, quality="720p",
+    )
+
+    updates = await app.refresh_downloads()
+    # Terminal: not retried, and the item was never flipped out of 'downloaded'.
+    assert app.db.get_download(did)["status"] == "failed"
+    assert updates[0]["state"] == "not_an_upgrade"
+    assert app.db.get_episode(e)["quality"] == "1080p"
+    # The guard is released so a genuine future upgrade isn't blocked.
+    assert not app.db.has_active_upgrade(episode_id=e)
 
 
 # --------------------------------------------------------------------------- #

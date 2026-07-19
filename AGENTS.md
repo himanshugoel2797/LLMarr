@@ -205,18 +205,22 @@ in sync when adding a config step or provider/client type.
 ## Not yet implemented (good next tasks)
 
 - Full Sonarr custom-format quality profiles.
-- Quality upgrades (G4, deliberately deferred): `downloads.quality` is written
-  but never read; there is no upgrade path. A proper version needs (a) a
-  `quality.upgrade_until` resolution cutoff (+ configure_quality arg), (b) a
-  resolution-rank comparator, (c) `quality` columns on episodes/movies populated
-  on import, (d) a `downloads.is_upgrade` flag so `Importer` can *replace* the
-  existing file (today `_place` returns "exists" and skips — with rename=True the
-  upgraded file has the same dst path, so it must overwrite), (e) an rss_poll
-  upgrade pass that grabs a strictly-better release *without* flipping the
-  episode/movie out of "downloaded" (so a failed upgrade can't corrupt state —
-  grab with a `mark_status=False`), and (f) an active-upgrade guard to avoid
-  re-grabbing while one is in flight. Left as a note because the replace-on-import
-  + status-preservation interactions are not cleanly contained.
+- (Done — G4) Quality upgrades. Set `quality.upgrade_until` (a resolution, e.g.
+  `1080p`, via `configure_quality(upgrade_until=...)`; `""` clears it) and the RSS
+  poller replaces already-downloaded items sitting below the cutoff with a
+  strictly-better release. Pieces: `parsing.resolution_rank` comparator +
+  `selector.is_upgrade`/`best_upgrade`; `quality` columns on episodes/movies
+  populated on import (`parse_resolution(file) or download.quality`); a
+  `downloads.is_upgrade` flag; the upgrade grab uses `App.grab(is_upgrade=True,
+  mark_status=False)` so the item stays `downloaded` while the better release
+  downloads (a failed upgrade can't strand it — `reset_grab_to_missing` only
+  touches `grabbed`). `Importer._place(overwrite=True)` replaces in place and
+  guards against downgrades (only overwrites when strictly better; cleans up the
+  old file when rename is off). `db.has_active_upgrade` is the in-flight guard so
+  the poller doesn't re-grab every tick; an upgrade whose file turns out not to be
+  better is failed terminally (`state="not_an_upgrade"`) rather than retried.
+  Upgrades are limited to single-episode/single-movie releases (packs excluded via
+  `parsing.matches_single_episode`) to avoid unsafe whole-pack in-place replacement.
 - Download clients beyond qBittorrent (Transmission/Deluge) via `DownloadClient`.
 - Lidarr-style music.
 - (Done — G6) Bulk-activate catalogued Plex imports: `bulk_activate_series`

@@ -76,3 +76,52 @@ def test_rank_empty_when_all_filtered():
     q = QualityConfig(min_seeders=1000)
     assert selector.rank([rel("Show", seeders=10)], q) == []
     assert selector.best([rel("Show", seeders=10)], q) is None
+
+
+# --- quality upgrades (G4) ------------------------------------------------- #
+def test_is_upgrade_disabled_without_cutoff():
+    q = QualityConfig()  # upgrade_until unset
+    assert not selector.is_upgrade(rel("Show.S01E01.1080p"), "720p", q)
+
+
+def test_is_upgrade_strictly_better_within_cutoff():
+    q = QualityConfig(upgrade_until="1080p", min_seeders=1)
+    # 720p -> 1080p is a valid upgrade.
+    assert selector.is_upgrade(rel("Show.S01E01.1080p.WEB"), "720p", q)
+    # Same resolution is not an upgrade.
+    assert not selector.is_upgrade(rel("Show.S01E01.720p.WEB"), "720p", q)
+    # Lower resolution is not an upgrade.
+    assert not selector.is_upgrade(rel("Show.S01E01.480p"), "720p", q)
+
+
+def test_is_upgrade_does_not_exceed_cutoff():
+    q = QualityConfig(upgrade_until="1080p", min_seeders=1)
+    # 2160p is above the cutoff — don't chase it even from 720p.
+    assert not selector.is_upgrade(rel("Show.S01E01.2160p"), "720p", q)
+
+
+def test_is_upgrade_respects_hard_constraints():
+    q = QualityConfig(upgrade_until="1080p", ignored_terms=["cam"], min_seeders=5)
+    assert not selector.is_upgrade(rel("Show.S01E01.1080p.CAM"), "720p", q)
+    assert not selector.is_upgrade(rel("Show.S01E01.1080p", seeders=2), "720p", q)
+
+
+def test_is_upgrade_unknown_resolution_never_upgrades():
+    q = QualityConfig(upgrade_until="1080p", min_seeders=1)
+    assert not selector.is_upgrade(rel("Show.S01E01.WEB-DL"), "720p", q)
+
+
+def test_best_upgrade_picks_highest_within_cutoff():
+    q = QualityConfig(upgrade_until="1080p", min_seeders=1)
+    rels = [
+        rel("Show.S01E01.720p"),       # not an upgrade over 720p
+        rel("Show.S01E01.1080p.WEB"),  # valid
+        rel("Show.S01E01.2160p"),      # above cutoff, excluded
+    ]
+    pick = selector.best_upgrade(rels, "720p", q)
+    assert pick is not None and "1080p" in pick.title
+
+
+def test_best_upgrade_none_when_current_at_cutoff():
+    q = QualityConfig(upgrade_until="1080p", min_seeders=1)
+    assert selector.best_upgrade([rel("Show.S01E01.2160p")], "1080p", q) is None

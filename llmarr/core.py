@@ -23,11 +23,13 @@ from .metadata import get_provider
 from .notify.plex import PlexNotifier
 from .parsing import (
     is_batch,
+    matches_single_episode,
     parse_absolute_episode,
     parse_absolute_range,
     parse_episode,
     parse_resolution,
     parse_season_pack,
+    resolution_rank,
     title_matches_episode,
 )
 
@@ -427,6 +429,8 @@ class App:
         indexer: Optional[str] = None,
         size: Optional[int] = None,
         guid: Optional[str] = None,
+        is_upgrade: bool = False,
+        mark_status: bool = True,
     ) -> dict:
         name, cfg = self._client_config(client_name)
         client = get_client(cfg)
@@ -453,18 +457,24 @@ class App:
             save_path=save_path or cfg.save_path,
             quality=parse_resolution(title),
             size=size,
+            is_upgrade=1 if is_upgrade else 0,
             status="grabbed",
         )
+        # A quality upgrade grabs with mark_status=False so the episode/movie stays
+        # "downloaded" while the better release downloads — a failed upgrade then
+        # can't strand it out of the library. The new file replaces the old on
+        # import (see Importer overwrite handling).
         covered: list[int] = []
-        if series_id:
-            # Mark the linked episode plus every other episode this pack covers.
-            covered = self._mark_covered_grabbed(
-                series_id, title, always=[episode_id] if episode_id else []
-            )
-        elif episode_id:
-            self.db.set_episode_status(episode_id, "grabbed")
-        if movie_id:
-            self.db.set_movie_status(movie_id, "grabbed")
+        if mark_status:
+            if series_id:
+                # Mark the linked episode plus every other episode this pack covers.
+                covered = self._mark_covered_grabbed(
+                    series_id, title, always=[episode_id] if episode_id else []
+                )
+            elif episode_id:
+                self.db.set_episode_status(episode_id, "grabbed")
+            if movie_id:
+                self.db.set_movie_status(movie_id, "grabbed")
         if guid:
             self.db.record_guid(guid)
         return {
@@ -513,7 +523,16 @@ class App:
                 # _import_and_notify sets "imported" on success; otherwise record
                 # "completed" so it's retried next poll.
                 if self.db.get_download(d["id"])["status"] != "imported":
-                    self.db.set_download_status(d["id"], "completed", save_path=content)
+                    imp = result.get("import") or {}
+                    if d.get("is_upgrade") and imp.get("skipped") and not imp.get("errors"):
+                        # The "upgrade" turned out not to be an improvement — a fixed
+                        # property of the content, so retrying is pointless and would
+                        # keep the item's upgrade guard active forever. Fail it
+                        # terminally; the item was never flipped out of 'downloaded'.
+                        self.db.set_download_status(d["id"], "failed")
+                        result["state"] = "not_an_upgrade"
+                    else:
+                        self.db.set_download_status(d["id"], "completed", save_path=content)
                 updates.append(result)
             elif st.progress > 0:
                 self.db.set_download_status(d["id"], "downloading")
@@ -610,13 +629,27 @@ class App:
         auto-grab the best matching, not-yet-seen release."""
         cfg = self.config
         grabbed, candidates, checked = [], [], 0
+        upgraded: list[dict] = []
+        cutoff = resolution_rank(cfg.quality.upgrade_until) if cfg.quality.upgrade_until else None
         for series in self.db.list_series():
             if not series["monitored"]:
                 continue
             missing = self.db.list_episodes(
                 series["id"], status="missing", monitored=True
             )
-            if not missing:
+            # Downloaded, monitored episodes below the upgrade cutoff that don't
+            # already have an upgrade in flight (G4).
+            upgradable = []
+            if cutoff is not None:
+                upgradable = [
+                    e
+                    for e in self.db.list_episodes(
+                        series["id"], status="downloaded", monitored=True
+                    )
+                    if resolution_rank(e.get("quality")) < cutoff
+                    and not self.db.has_active_upgrade(episode_id=e["id"])
+                ]
+            if not missing and not upgradable:
                 continue
             title = series["title"]
             absolute = bool(series.get("absolute_numbering"))
@@ -625,6 +658,38 @@ class App:
             except Exception as exc:  # noqa: BLE001
                 candidates.append({"series": title, "error": str(exc)})
                 continue
+            for ep in upgradable:
+                matching = [
+                    r
+                    for r in releases
+                    if matches_single_episode(r.title, ep["season"], ep["episode"], absolute)
+                    and not self.db.seen_guid(r.guid)
+                ]
+                pick = selector.best_upgrade(matching, ep.get("quality"), cfg.quality)
+                if not pick or not pick.grab_url:
+                    continue
+                label = f"{title} S{ep['season']:02d}E{ep['episode']:02d}"
+                entry = {
+                    "episode": label, "release": pick.title,
+                    "from_quality": ep.get("quality"),
+                    "to_quality": parse_resolution(pick.title),
+                }
+                if cfg.rss.auto_grab:
+                    res = await self.grab(
+                        pick.grab_url,
+                        title=pick.title,
+                        series_id=series["id"],
+                        episode_id=ep["id"],
+                        indexer=pick.indexer,
+                        size=pick.size,
+                        guid=pick.guid,
+                        is_upgrade=True,
+                        mark_status=False,
+                    )
+                    upgraded.append({**entry, **res})
+                else:
+                    entry["grab_url"] = pick.grab_url
+                    candidates.append({"upgrade": entry})
             for ep in missing:
                 # A pack grabbed earlier in this run may already cover this
                 # episode — re-check so we don't grab a redundant single.
@@ -660,10 +725,20 @@ class App:
                         {"episode": label, "release": pick.title, "grab_url": pick.grab_url}
                     )
 
-        # Monitored movies that are still missing.
+        # Monitored movies: grab the missing ones, and upgrade downloaded ones
+        # sitting below the quality cutoff (G4).
         movies_checked = 0
         for movie in self.db.list_movies():
-            if not movie["monitored"] or movie["movie_status"] != "missing":
+            if not movie["monitored"]:
+                continue
+            missing = movie["movie_status"] == "missing"
+            upgradable = (
+                cutoff is not None
+                and movie["movie_status"] == "downloaded"
+                and resolution_rank(movie.get("quality")) < cutoff
+                and not self.db.has_active_upgrade(movie_id=movie["id"])
+            )
+            if not missing and not upgradable:
                 continue
             movies_checked += 1
             query = f"{movie['title']} {movie['year']}" if movie["year"] else movie["title"]
@@ -672,30 +747,44 @@ class App:
             except Exception as exc:  # noqa: BLE001
                 candidates.append({"movie": movie["title"], "error": str(exc)})
                 continue
-            pick = selector.best(
-                [r for r in releases if not self.db.seen_guid(r.guid)], cfg.quality
-            )
-            if not pick or not pick.grab_url:
-                continue
-            if cfg.rss.auto_grab:
-                res = await self.grab(
-                    pick.grab_url,
-                    title=pick.title,
-                    movie_id=movie["id"],
-                    indexer=pick.indexer,
-                    size=pick.size,
-                    guid=pick.guid,
-                )
-                grabbed.append({"movie": movie["title"], "release": pick.title, **res})
-            else:
-                candidates.append(
-                    {"movie": movie["title"], "release": pick.title, "grab_url": pick.grab_url}
-                )
+            fresh = [r for r in releases if not self.db.seen_guid(r.guid)]
+            if missing:
+                pick = selector.best(fresh, cfg.quality)
+                if pick and pick.grab_url:
+                    if cfg.rss.auto_grab:
+                        res = await self.grab(
+                            pick.grab_url, title=pick.title, movie_id=movie["id"],
+                            indexer=pick.indexer, size=pick.size, guid=pick.guid,
+                        )
+                        grabbed.append({"movie": movie["title"], "release": pick.title, **res})
+                    else:
+                        candidates.append(
+                            {"movie": movie["title"], "release": pick.title, "grab_url": pick.grab_url}
+                        )
+            elif upgradable:
+                pick = selector.best_upgrade(fresh, movie.get("quality"), cfg.quality)
+                if pick and pick.grab_url:
+                    entry = {
+                        "movie": movie["title"], "release": pick.title,
+                        "from_quality": movie.get("quality"),
+                        "to_quality": parse_resolution(pick.title),
+                    }
+                    if cfg.rss.auto_grab:
+                        res = await self.grab(
+                            pick.grab_url, title=pick.title, movie_id=movie["id"],
+                            indexer=pick.indexer, size=pick.size, guid=pick.guid,
+                            is_upgrade=True, mark_status=False,
+                        )
+                        upgraded.append({**entry, **res})
+                    else:
+                        entry["grab_url"] = pick.grab_url
+                        candidates.append({"upgrade": entry})
 
         return {
             "checked_episodes": checked,
             "checked_movies": movies_checked,
             "grabbed": grabbed,
+            "upgraded": upgraded,
             "candidates": candidates,
         }
 

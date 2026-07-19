@@ -72,6 +72,14 @@ def test_configure_import(wired):
     assert out["mode"] == "copy" and out["min_video_mb"] == 200
 
 
+def test_configure_quality_upgrade_until(wired):
+    out = server.configure_quality(upgrade_until="1080p")
+    assert out["upgrade_until"] == "1080p"
+    # Empty string clears it (disables upgrades).
+    out = server.configure_quality(upgrade_until="")
+    assert out["upgrade_until"] is None
+
+
 def test_get_series_not_found(wired):
     assert "error" in server.get_series(999)
 

@@ -136,3 +136,23 @@ def test_migration_adds_series_refresh_and_plex_columns(tmp_path):
     d = Database(p)
     cols = {r["name"] for r in d.query("PRAGMA table_info(series)")}
     assert {"last_refresh", "plex_rating_key", "plex_section"} <= cols
+
+
+def test_migration_adds_quality_and_upgrade_columns(tmp_path):
+    import sqlite3
+
+    p = tmp_path / "old.db"
+    conn = sqlite3.connect(p)
+    conn.executescript(
+        "CREATE TABLE downloads (id INTEGER PRIMARY KEY, title TEXT, status TEXT, grabbed_at REAL);"
+        "CREATE TABLE episodes (id INTEGER PRIMARY KEY, series_id INTEGER, season INTEGER, "
+        "episode INTEGER, status TEXT, UNIQUE(series_id, season, episode));"
+        "CREATE TABLE movies (id INTEGER PRIMARY KEY, provider TEXT, provider_id TEXT, "
+        "title TEXT, added_at REAL, UNIQUE(provider, provider_id));"
+    )
+    conn.commit()
+    conn.close()
+    d = Database(p)
+    assert "is_upgrade" in {r["name"] for r in d.query("PRAGMA table_info(downloads)")}
+    assert "quality" in {r["name"] for r in d.query("PRAGMA table_info(episodes)")}
+    assert "quality" in {r["name"] for r in d.query("PRAGMA table_info(movies)")}

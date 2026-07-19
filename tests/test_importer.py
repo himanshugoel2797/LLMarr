@@ -312,3 +312,102 @@ def test_missing_video_files_skipped(library):
     d = {"id": 1, "series_id": sid, "episode_id": None, "movie_id": None}
     res = app.importer.import_download(d, "/downloads/Show.S01")
     assert not res.imported and res.skipped
+
+
+# --- quality upgrades (G4) ------------------------------------------------- #
+def test_import_records_quality(library):
+    app, dl, lib = library
+    sid = app.db.upsert_series(
+        provider="tmdb", provider_id="1", title="Show", root_folder="tv", folder_name="Show"
+    )
+    e = app.db.upsert_episode(sid, 1, 1)
+    write(dl / "Show.S01E01.720p.WEB.mkv")
+    d = {"id": 1, "series_id": sid, "episode_id": e, "movie_id": None}
+    res = app.importer.import_download(d, "/downloads/Show.S01E01.720p.WEB.mkv")
+    assert res.ok
+    assert app.db.get_episode(e)["quality"] == "720p"
+
+
+def test_upgrade_replaces_existing_episode_file(library):
+    app, dl, lib = library
+    sid = app.db.upsert_series(
+        provider="tmdb", provider_id="1", title="Show", root_folder="tv", folder_name="Show"
+    )
+    e = app.db.upsert_episode(sid, 1, 1, title="Ep")
+    # First, a 720p import.
+    write(dl / "Show.S01E01.720p.WEB.mkv")
+    d1 = {"id": 1, "series_id": sid, "episode_id": e, "movie_id": None}
+    r1 = app.importer.import_download(d1, "/downloads/Show.S01E01.720p.WEB.mkv")
+    dest = Path(r1.imported[0].destination)
+    assert dest.exists() and app.db.get_episode(e)["quality"] == "720p"
+
+    # Now a 1080p upgrade — same renamed dst, so it overwrites in place.
+    src2 = write(dl / "Show.S01E01.1080p.WEB.mkv")
+    d2 = {"id": 2, "series_id": sid, "episode_id": e, "movie_id": None, "is_upgrade": 1}
+    r2 = app.importer.import_download(d2, "/downloads/Show.S01E01.1080p.WEB.mkv")
+    assert r2.ok, r2
+    assert app.db.get_episode(e)["quality"] == "1080p"
+    # The library file now points at the new source (same inode via hardlink).
+    assert dest.stat().st_ino == src2.stat().st_ino
+
+
+def test_upgrade_removes_old_file_when_rename_off(library):
+    app, dl, lib = library
+    app.store.mutate(lambda c: setattr(c.importer, "rename", False))
+    sid = app.db.upsert_series(
+        provider="tmdb", provider_id="1", title="Show", root_folder="tv", folder_name="Show"
+    )
+    e = app.db.upsert_episode(sid, 1, 1)
+    write(dl / "Show.S01E01.720p.mkv")
+    d1 = {"id": 1, "series_id": sid, "episode_id": e, "movie_id": None}
+    r1 = app.importer.import_download(d1, "/downloads/Show.S01E01.720p.mkv")
+    old = Path(r1.imported[0].destination)
+    assert old.exists()
+
+    write(dl / "Show.S01E01.1080p.mkv")
+    d2 = {"id": 2, "series_id": sid, "episode_id": e, "movie_id": None, "is_upgrade": 1}
+    r2 = app.importer.import_download(d2, "/downloads/Show.S01E01.1080p.mkv")
+    new = Path(r2.imported[0].destination)
+    # Different name (rename off), so the old file is explicitly cleaned up.
+    assert new.exists() and new != old
+    assert not old.exists()
+    assert str(old) in r2.replaced
+
+
+def test_upgrade_skips_when_not_better(library):
+    app, dl, lib = library
+    sid = app.db.upsert_series(
+        provider="tmdb", provider_id="1", title="Show", root_folder="tv", folder_name="Show"
+    )
+    e = app.db.upsert_episode(sid, 1, 1)
+    write(dl / "Show.S01E01.1080p.mkv")
+    d1 = {"id": 1, "series_id": sid, "episode_id": e, "movie_id": None}
+    app.importer.import_download(d1, "/downloads/Show.S01E01.1080p.mkv")
+    assert app.db.get_episode(e)["quality"] == "1080p"
+
+    # A 720p "upgrade" must be refused — never downgrade.
+    write(dl / "Show.S01E01.720p.mkv")
+    d2 = {"id": 2, "series_id": sid, "episode_id": e, "movie_id": None, "is_upgrade": 1}
+    r2 = app.importer.import_download(d2, "/downloads/Show.S01E01.720p.mkv")
+    assert not r2.imported and r2.skipped
+    assert app.db.get_episode(e)["quality"] == "1080p"
+
+
+def test_movie_upgrade_replaces_and_records_quality(library):
+    app, dl, lib = library
+    mid = app.db.upsert_movie(
+        provider="tmdb", provider_id="1", title="Film", year=2020,
+        root_folder="mv", folder_name="Film (2020)",
+    )
+    write(dl / "Film.2020.720p.mkv", size=2000)
+    d1 = {"id": 1, "series_id": None, "episode_id": None, "movie_id": mid}
+    r1 = app.importer.import_download(d1, "/downloads/Film.2020.720p.mkv")
+    assert app.db.get_movie(mid)["quality"] == "720p"
+    dest = Path(r1.imported[0].destination)
+
+    src2 = write(dl / "Film.2020.1080p.mkv", size=2000)
+    d2 = {"id": 2, "series_id": None, "episode_id": None, "movie_id": mid, "is_upgrade": 1}
+    r2 = app.importer.import_download(d2, "/downloads/Film.2020.1080p.mkv")
+    assert r2.ok
+    assert app.db.get_movie(mid)["quality"] == "1080p"
+    assert dest.stat().st_ino == src2.stat().st_ino

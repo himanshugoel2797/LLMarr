@@ -296,6 +296,15 @@ Not full Sonarr custom formats — a lightweight, predictable heuristic
 (`configure_quality`): hard filters (ignored/required terms, min seeders, size
 bounds) then ranking by resolution preference, preferred terms, and seeders.
 
+**Quality upgrades.** Set `configure_quality(upgrade_until="1080p")` and the RSS
+poller looks for strictly-higher-resolution releases of items you've already
+downloaded below that cutoff, replacing the file in place (up to — never above —
+the cutoff). The item stays available in Plex throughout: it is only replaced
+once the better release finishes downloading, and an upgrade that turns out not
+to be better is discarded without touching the existing file. Pass
+`upgrade_until=""` to disable. Upgrades apply to single-episode and single-movie
+releases (not season packs).
+
 ## Development
 
 ```bash

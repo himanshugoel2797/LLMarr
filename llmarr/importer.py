@@ -25,7 +25,13 @@ from typing import Optional
 from pydantic import BaseModel
 
 from . import pathmap
-from .parsing import parse_absolute_episode, parse_episode, parse_multi_episode
+from .parsing import (
+    parse_absolute_episode,
+    parse_episode,
+    parse_multi_episode,
+    parse_resolution,
+    resolution_rank,
+)
 
 # Subtitle sidecars imported alongside their video (kept in step with the video's
 # renamed base name, preserving any language/flag suffix like ".en" / ".forced").
@@ -45,6 +51,7 @@ class ImportResult(BaseModel):
     imported: list[ImportedFile] = []
     scan_paths: list[str] = []  # library dirs (work context) to hand to Plex
     skipped: list[str] = []
+    replaced: list[str] = []  # previous files removed on a quality upgrade (G4)
     errors: list[str] = []
 
     @property
@@ -138,10 +145,17 @@ class Importer:
                 f"need >= {need:.0f}MB (min_free_space_mb={floor})"
             )
 
-    def _place(self, src: Path, dst: Path) -> str:
+    def _place(self, src: Path, dst: Path, overwrite: bool = False) -> str:
         dst.parent.mkdir(parents=True, exist_ok=True)
         if dst.exists():
-            return "exists"
+            if not overwrite:
+                return "exists"
+            # Quality upgrade: drop the existing file so the better release takes
+            # its place (os.link would otherwise fail on an existing dst).
+            try:
+                dst.unlink()
+            except OSError:
+                pass
         mode = self.cfg.mode
         if mode == "move":
             shutil.move(str(src), str(dst))
@@ -179,14 +193,14 @@ class Importer:
         return out
 
     def _place_subs(self, video: Path, dst: Path, result: ImportResult,
-                    season=None, episode=None, episode_id=None) -> None:
+                    season=None, episode=None, episode_id=None, overwrite=False) -> None:
         """Hardlink/copy each subtitle sidecar next to the placed video, matching
         the video's (possibly renamed) base name and keeping its language suffix."""
         for sub in self._sidecar_subs(video):
             remainder = sub.name[len(video.stem):]  # e.g. ".en.srt" or ".srt"
             sub_dst = dst.with_name(dst.stem + remainder)
             try:
-                action = self._place(sub, sub_dst)
+                action = self._place(sub, sub_dst, overwrite=overwrite)
             except OSError as exc:
                 result.errors.append(f"{sub.name}: {exc}")
                 continue
@@ -194,6 +208,21 @@ class Importer:
                 ImportedFile(source=str(sub), destination=str(sub_dst), action=action,
                              season=season, episode=episode, episode_id=episode_id)
             )
+
+    def _remove_replaced(self, old_paths: set, keep: Path, result: ImportResult) -> None:
+        """Delete the previous file(s) an upgrade superseded, once the replacement
+        is in place. Skips the file we just wrote (same path when renaming keeps a
+        stable name) and anything already gone."""
+        for old in old_paths:
+            if not old or old == str(keep):
+                continue
+            try:
+                p = Path(old)
+                if p.exists():
+                    p.unlink()
+                    result.replaced.append(old)
+            except OSError as exc:  # noqa: BLE001 - cleanup best-effort
+                result.errors.append(f"could not remove replaced file {old}: {exc}")
 
     # -- entry point -------------------------------------------------------- #
     def import_download(self, download: dict, content_path: Optional[str]) -> ImportResult:
@@ -236,6 +265,7 @@ class Importer:
             return result
         series_dir = dest_root / _sanitize(series["folder_name"] or series["title"])
         absolute = bool(series.get("absolute_numbering"))
+        is_upg = bool(download.get("is_upgrade"))
 
         linked_episode_id = download.get("episode_id")
         scan_dirs: set[str] = set()
@@ -273,6 +303,22 @@ class Importer:
                 )
                 continue
 
+            file_res = parse_resolution(video.name) or download.get("quality")
+            # On an upgrade, only replace when the new file is strictly better than
+            # every episode it covers — never downgrade an already-good episode
+            # (release titles can lie, and a pack may cover mixed qualities).
+            if is_upg:
+                have = [
+                    resolution_rank(e.get("quality"))
+                    for e in eps
+                    if e["status"] == "downloaded"
+                ]
+                if have and resolution_rank(file_res) <= max(have):
+                    result.skipped.append(
+                        f"{video.name}: {file_res or 'unknown'} not an upgrade over existing"
+                    )
+                    continue
+
             season = eps[0]["season"]
             season_dir = series_dir / f"Season {season:02d}"
             if self.cfg.rename:
@@ -285,22 +331,27 @@ class Importer:
             else:
                 fname = video.name
             dst = season_dir / fname
+            # Capture old files up front so an upgrade can clean them up even when
+            # renaming is off (new name differs, so overwrite alone wouldn't).
+            old_paths = {e.get("file_path") for e in eps if e.get("file_path")}
             try:
-                action = self._place(video, dst)
+                action = self._place(video, dst, overwrite=is_upg)
             except OSError as exc:
                 result.errors.append(f"{video.name}: {exc}")
                 continue
             # One physical file covers every episode it spans — mark them all.
             for ep in eps:
-                self.app.db.set_episode_status(ep["id"], "downloaded", str(dst))
+                self.app.db.set_episode_status(ep["id"], "downloaded", str(dst), quality=file_res)
                 result.imported.append(
                     ImportedFile(
                         source=str(video), destination=str(dst), action=action,
                         season=ep["season"], episode=ep["episode"], episode_id=ep["id"],
                     )
                 )
+            if is_upg:
+                self._remove_replaced(old_paths, keep=dst, result=result)
             self._place_subs(video, dst, result, season=season,
-                             episode=eps[0]["episode"], episode_id=eps[0]["id"])
+                             episode=eps[0]["episode"], episode_id=eps[0]["id"], overwrite=is_upg)
             scan_dirs.add(str(season_dir))
         result.scan_paths = sorted(scan_dirs)
         return result
@@ -319,12 +370,22 @@ class Importer:
             return result
         movie_dir = dest_root / _sanitize(movie["folder_name"] or movie["title"])
         base = _sanitize(movie["folder_name"] or movie["title"])
+        is_upg = bool(download.get("is_upgrade"))
         # A movie "pack" can hold several feature-length files (e.g. a trilogy).
         # Import every feature-sized file (>= half the largest), skipping extras.
         by_size = sorted(videos, key=lambda p: p.stat().st_size, reverse=True)
         largest = by_size[0].stat().st_size
         features = [p for p in by_size if p.stat().st_size >= largest * 0.5]
 
+        primary_res = parse_resolution(features[0].name) or download.get("quality")
+        if is_upg and movie["movie_status"] == "downloaded":
+            if resolution_rank(primary_res) <= resolution_rank(movie.get("quality")):
+                result.skipped.append(
+                    f"{features[0].name}: {primary_res or 'unknown'} not an upgrade over existing"
+                )
+                return result
+
+        old_path = movie.get("file_path")
         primary_dst = None
         for idx, feature in enumerate(features):
             if self.cfg.rename:
@@ -336,7 +397,7 @@ class Importer:
                 fname = feature.name
             dst = movie_dir / fname
             try:
-                action = self._place(feature, dst)
+                action = self._place(feature, dst, overwrite=is_upg)
             except OSError as exc:
                 result.errors.append(f"{feature.name}: {exc}")
                 continue
@@ -345,9 +406,11 @@ class Importer:
             result.imported.append(
                 ImportedFile(source=str(feature), destination=str(dst), action=action)
             )
-            self._place_subs(feature, dst, result)
+            self._place_subs(feature, dst, result, overwrite=is_upg)
         if primary_dst is None:
             return result
-        self.app.db.set_movie_status(movie["id"], "downloaded", primary_dst)
+        if is_upg and old_path:
+            self._remove_replaced({old_path}, keep=Path(primary_dst), result=result)
+        self.app.db.set_movie_status(movie["id"], "downloaded", primary_dst, quality=primary_res)
         result.scan_paths = [str(movie_dir)]
         return result

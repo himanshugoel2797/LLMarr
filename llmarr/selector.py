@@ -12,7 +12,7 @@ import re
 
 from .config import QualityConfig
 from .indexers.prowlarr import Release
-from .parsing import parse_resolution
+from .parsing import parse_resolution, resolution_rank
 
 
 def _title_has(title: str, term: str) -> bool:
@@ -70,3 +70,38 @@ def rank(releases: list[Release], q: QualityConfig) -> list[tuple[Release, float
 def best(releases: list[Release], q: QualityConfig) -> Release | None:
     ranked = rank(releases, q)
     return ranked[0][0] if ranked else None
+
+
+# --------------------------------------------------------------------------- #
+# Quality upgrades (G4)
+# --------------------------------------------------------------------------- #
+def is_upgrade(release: Release, current_res: str | None, q: QualityConfig) -> bool:
+    """True if ``release`` is a worthwhile quality upgrade over ``current_res``:
+    a known resolution strictly higher than what we have, no higher than the
+    configured ``upgrade_until`` cutoff, and passing the hard quality constraints.
+    Returns False when upgrades are disabled (``upgrade_until`` unset)."""
+    if not q.upgrade_until:
+        return False
+    cand_rank = resolution_rank(parse_resolution(release.title))
+    if cand_rank < 0:
+        return False  # unknown resolution — never treat as an upgrade
+    if cand_rank <= resolution_rank(current_res):
+        return False  # not strictly better than what we already have
+    if cand_rank > resolution_rank(q.upgrade_until):
+        return False  # above the cutoff — don't chase it
+    return passes(release, q)[0]
+
+
+def best_upgrade(
+    releases: list[Release], current_res: str | None, q: QualityConfig
+) -> Release | None:
+    """Pick the best upgrade among ``releases``: the highest resolution that is a
+    valid upgrade over ``current_res``, tie-broken by the normal quality score."""
+    ups = [r for r in releases if is_upgrade(r, current_res, q)]
+    if not ups:
+        return None
+    ups.sort(
+        key=lambda r: (resolution_rank(parse_resolution(r.title)), score(r, q)),
+        reverse=True,
+    )
+    return ups[0]

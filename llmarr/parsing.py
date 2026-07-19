@@ -89,6 +89,20 @@ def parse_resolution(title: str) -> Optional[str]:
     return "2160p" if val == "4k" else val
 
 
+# Ascending quality order for upgrade comparisons (G4). Higher index = better.
+RESOLUTION_ORDER = ["480p", "720p", "1080p", "2160p"]
+
+
+def resolution_rank(res: Optional[str]) -> int:
+    """Numeric rank of a resolution for comparison; higher is better. An unknown
+    or missing resolution ranks -1 (below every known one) so we never treat an
+    unrecognised release as an upgrade target."""
+    try:
+        return RESOLUTION_ORDER.index(res)
+    except ValueError:
+        return -1
+
+
 def matches_episode(title: str, season: int, episode: int) -> bool:
     """True if ``title`` covers this specific episode (single ep or its season pack)."""
     se = parse_episode(title)
@@ -151,3 +165,18 @@ def title_matches_episode(title: str, season: int, episode: int, absolute: bool 
     if absolute:
         return matches_episode_absolute(title, episode)
     return matches_episode(title, season, episode)
+
+
+def matches_single_episode(title: str, season: int, episode: int, absolute: bool = False) -> bool:
+    """Like :func:`title_matches_episode` but matches *only* a release for this
+    one episode — season packs, batches and ranges are rejected. Used for quality
+    upgrades, where replacing a whole pack in place would risk downgrading other
+    episodes, so upgrades are limited to single-episode releases."""
+    if absolute:
+        if parse_absolute_range(title) or is_batch(title):
+            return False
+        se = parse_episode(title)
+        if se:  # some anime still tag SxxExx — treat as season 1
+            return se == (1, episode)
+        return parse_absolute_episode(title) == episode
+    return parse_episode(title) == (season, episode)

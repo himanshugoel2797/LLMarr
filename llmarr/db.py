@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS episodes (
     monitored     INTEGER NOT NULL DEFAULT 1,
     status        TEXT NOT NULL DEFAULT 'missing',  -- missing|grabbed|downloaded
     file_path     TEXT,
+    quality       TEXT,                             -- resolution of the imported file (G4)
     UNIQUE(series_id, season, episode)
 );
 
@@ -63,6 +64,7 @@ CREATE TABLE IF NOT EXISTS movies (
     root_folder   TEXT,
     folder_name   TEXT,
     file_path     TEXT,
+    quality       TEXT,                             -- resolution of the imported file (G4)
     added_at      REAL NOT NULL,
     UNIQUE(provider, provider_id)
 );
@@ -81,6 +83,7 @@ CREATE TABLE IF NOT EXISTS downloads (
     save_path     TEXT,
     quality       TEXT,
     size          INTEGER,
+    is_upgrade    INTEGER NOT NULL DEFAULT 0,       -- grab replaces an existing file (G4)
     status        TEXT NOT NULL DEFAULT 'grabbed',  -- grabbed|downloading|completed|imported|failed
     grabbed_at    REAL NOT NULL
 );
@@ -139,6 +142,18 @@ class Database:
                 "ALTER TABLE downloads ADD COLUMN movie_id INTEGER "
                 "REFERENCES movies(id) ON DELETE SET NULL"
             )
+        if "is_upgrade" not in cols:
+            # Grab that replaces an existing file for a quality upgrade (G4).
+            self._conn.execute(
+                "ALTER TABLE downloads ADD COLUMN is_upgrade INTEGER NOT NULL DEFAULT 0"
+            )
+        ecols = {r["name"] for r in self._conn.execute("PRAGMA table_info(episodes)")}
+        if "quality" not in ecols:
+            # Resolution of the imported file, for upgrade comparisons (G4).
+            self._conn.execute("ALTER TABLE episodes ADD COLUMN quality TEXT")
+        mcols = {r["name"] for r in self._conn.execute("PRAGMA table_info(movies)")}
+        if "quality" not in mcols:
+            self._conn.execute("ALTER TABLE movies ADD COLUMN quality TEXT")
         scols = {r["name"] for r in self._conn.execute("PRAGMA table_info(series)")}
         if "absolute_numbering" not in scols:
             self._conn.execute(
@@ -242,14 +257,23 @@ class Database:
     def delete_movie(self, movie_id: int) -> None:
         self.execute("DELETE FROM movies WHERE id=?", (movie_id,))
 
-    def set_movie_status(self, movie_id: int, status: str, file_path: Optional[str] = None):
+    def set_movie_status(
+        self,
+        movie_id: int,
+        status: str,
+        file_path: Optional[str] = None,
+        quality: Optional[str] = None,
+    ):
+        sets = ["movie_status=?"]
+        params: list[Any] = [status]
         if file_path is not None:
-            self.execute(
-                "UPDATE movies SET movie_status=?, file_path=? WHERE id=?",
-                (status, file_path, movie_id),
-            )
-        else:
-            self.execute("UPDATE movies SET movie_status=? WHERE id=?", (status, movie_id))
+            sets.append("file_path=?")
+            params.append(file_path)
+        if quality is not None:
+            sets.append("quality=?")
+            params.append(quality)
+        params.append(movie_id)
+        self.execute(f"UPDATE movies SET {', '.join(sets)} WHERE id=?", params)
 
     def set_movie_monitored(self, movie_id: int, monitored: bool):
         self.execute(
@@ -293,14 +317,23 @@ class Database:
     def get_episode(self, episode_id: int) -> Optional[dict]:
         return self.query_one("SELECT * FROM episodes WHERE id=?", (episode_id,))
 
-    def set_episode_status(self, episode_id: int, status: str, file_path: Optional[str] = None):
+    def set_episode_status(
+        self,
+        episode_id: int,
+        status: str,
+        file_path: Optional[str] = None,
+        quality: Optional[str] = None,
+    ):
+        sets = ["status=?"]
+        params: list[Any] = [status]
         if file_path is not None:
-            self.execute(
-                "UPDATE episodes SET status=?, file_path=? WHERE id=?",
-                (status, file_path, episode_id),
-            )
-        else:
-            self.execute("UPDATE episodes SET status=? WHERE id=?", (status, episode_id))
+            sets.append("file_path=?")
+            params.append(file_path)
+        if quality is not None:
+            sets.append("quality=?")
+            params.append(quality)
+        params.append(episode_id)
+        self.execute(f"UPDATE episodes SET {', '.join(sets)} WHERE id=?", params)
 
     def set_episode_monitored(self, episode_id: int, monitored: bool):
         self.execute(
@@ -338,6 +371,21 @@ class Database:
 
     def get_download(self, download_id: int) -> Optional[dict]:
         return self.query_one("SELECT * FROM downloads WHERE id=?", (download_id,))
+
+    def has_active_upgrade(
+        self, *, episode_id: Optional[int] = None, movie_id: Optional[int] = None
+    ) -> bool:
+        """True if an upgrade grab for this episode/movie is still in flight (not
+        yet imported/failed) — the guard that stops the poller re-grabbing an
+        upgrade every tick while one downloads."""
+        col = "episode_id" if episode_id is not None else "movie_id"
+        val = episode_id if episode_id is not None else movie_id
+        row = self.query_one(
+            f"SELECT 1 FROM downloads WHERE is_upgrade=1 AND {col}=? "
+            "AND status IN ('grabbed', 'downloading', 'completed')",
+            (val,),
+        )
+        return row is not None
 
     def set_download_status(self, download_id: int, status: str, **fields):
         sets = ["status=?"]

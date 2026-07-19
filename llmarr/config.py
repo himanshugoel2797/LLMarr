@@ -124,6 +124,11 @@ class QualityConfig(BaseModel):
     prefer_terms: list[str] = Field(
         default_factory=lambda: ["web-dl", "webrip", "bluray", "x265", "hevc"]
     )
+    # Quality-upgrade target (G4). When set to a resolution (e.g. "1080p"), the
+    # RSS poller looks for strictly-higher-resolution releases of items already
+    # downloaded below it and replaces the file in place, up to and including this
+    # cutoff (it never chases a resolution above it). None = upgrades disabled.
+    upgrade_until: Optional[str] = None
 
 
 class RssConfig(BaseModel):

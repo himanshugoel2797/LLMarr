@@ -384,8 +384,13 @@ def configure_quality(
     min_seeders: Optional[int] = None,
     min_size_mb: Optional[int] = None,
     max_size_mb: Optional[int] = None,
+    upgrade_until: Optional[str] = None,
 ) -> dict:
-    """Update the release-selection preferences used for ranking and auto-grab."""
+    """Update the release-selection preferences used for ranking and auto-grab.
+    ``upgrade_until`` is the quality-upgrade target (a resolution like "1080p"):
+    the RSS poller then replaces already-downloaded items sitting below it with a
+    strictly-better release, never chasing a resolution above the cutoff. Pass ""
+    to clear it and disable upgrades."""
     def _m(c):
         q = c.quality
         if preferred_resolutions is not None:
@@ -402,6 +407,7 @@ def configure_quality(
             q.min_size_mb = min_size_mb
         if max_size_mb is not None:
             q.max_size_mb = max_size_mb
+        _set_opt(q, "upgrade_until", upgrade_until)
     app().store.mutate(_m)
     return app().config.quality.model_dump()
 

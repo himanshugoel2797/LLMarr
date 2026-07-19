@@ -129,3 +129,28 @@ def test_title_matches_episode_dispatch():
     assert parsing.title_matches_episode("[Group] Show - 12", 1, 12, absolute=False) is False
     # ...but does when the series is flagged absolute.
     assert parsing.title_matches_episode("[Group] Show - 12", 1, 12, absolute=True) is True
+
+
+@pytest.mark.parametrize(
+    "res,rank",
+    [("480p", 0), ("720p", 1), ("1080p", 2), ("2160p", 3), (None, -1), ("bogus", -1)],
+)
+def test_resolution_rank(res, rank):
+    assert parsing.resolution_rank(res) == rank
+
+
+def test_matches_single_episode_excludes_packs():
+    # A single-episode release matches...
+    assert parsing.matches_single_episode("Show.S01E03.1080p", 1, 3) is True
+    # ...but a season pack must NOT (upgrades never replace a whole pack).
+    assert parsing.matches_single_episode("Show.S01.1080p.COMPLETE", 1, 3) is False
+    assert parsing.matches_single_episode("Show.Season.1.1080p", 1, 3) is False
+    # Wrong episode.
+    assert parsing.matches_single_episode("Show.S01E04.1080p", 1, 3) is False
+
+
+def test_matches_single_episode_absolute():
+    assert parsing.matches_single_episode("[Grp] Show - 12 [1080p]", 1, 12, absolute=True) is True
+    # Batches/ranges are rejected for absolute upgrades too.
+    assert parsing.matches_single_episode("[Grp] Show (01-24) [1080p]", 1, 12, absolute=True) is False
+    assert parsing.matches_single_episode("[Grp] Show Batch [1080p]", 1, 12, absolute=True) is False
