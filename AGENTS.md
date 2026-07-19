@@ -43,6 +43,13 @@ llmarr/
 methods; the poller calls the same `App` methods. Put logic in `App`, not in
 tool functions, so it's reachable from both and testable without the MCP layer.
 
+Onboarding: `setup.py` `build_status(app, plex_libraries=, connections=)` powers
+the `setup_status` tool — an ordered done/pending checklist + capability
+enumerations (providers/client-types/auth+import modes) + detected Plex libraries
+with suggested root-folder commands. The FastMCP `instructions` string
+(`server.INSTRUCTIONS`, sent on connect) tells LLMs to call it first. Keep both
+in sync when adding a config step or provider/client type.
+
 ## Key design decisions (don't relitigate without reason)
 
 - **Single-host by default.** `config.single_host=True` → `pathmap.translate`

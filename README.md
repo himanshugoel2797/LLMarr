@@ -186,6 +186,13 @@ token from the server's startup banner:
 
 ## First-run setup (all via tools)
 
+The fastest path is to let the LLM drive it: **`setup_status`** returns an ordered
+checklist (each step done/pending with the exact next tool to call), enumerates the
+available metadata providers / download-client types / auth & import modes, and —
+once Plex is linked — lists your detected libraries with ready-to-run
+`configure_root_folder` commands. The server also ships these instructions to the
+client on connect, so a capable LLM will start there on its own.
+
 1. `configure_metadata(tmdb_api_key="…")`
 2. `configure_prowlarr(url="http://localhost:9696", api_key="…")`
 3. `configure_download_client("qbit", url="http://localhost:8080", username="…", password="…", save_path="/data/downloads")`
@@ -269,6 +276,7 @@ for a single anime lookup, or make it the default with
 
 | Area | Tools |
 | --- | --- |
+| Setup | `setup_status` (guided checklist + enumerations — call first) |
 | Config | `get_config`, `configure_metadata`, `configure_prowlarr`, `configure_download_client`, `configure_plex`, `configure_root_folder`, `configure_quality`, `configure_rss`, `configure_import` |
 | Server / auth | `configure_server`, `get_auth_token`, `set_auth_token`, `rotate_auth_token`, `oauth_info` |
 | Path maps | `add_path_mapping`, `list_path_mappings`, `remove_path_mapping`, `translate_path` |

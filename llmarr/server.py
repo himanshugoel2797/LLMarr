@@ -53,7 +53,26 @@ async def lifespan(server: FastMCP):
         await state.poller.stop()
 
 
-mcp = FastMCP("llmarr", lifespan=lifespan)
+INSTRUCTIONS = """\
+LLMarr replicates Sonarr/Radarr-style media automation over MCP: pull metadata
+(TMDB for TV/movies, Jikan/MyAnimeList for anime), search torrents via Prowlarr,
+grab with qBittorrent, hardlink-import into an organised library, and notify Plex.
+
+When configuring LLMarr or diagnosing what's missing, ALWAYS call `setup_status`
+first. It returns an ordered checklist (done/pending) with the exact next tool to
+call, enumerates the available metadata providers / download-client types / auth
+modes, and — once Plex is linked — lists the detected libraries with suggested
+root-folder commands. Walk the user through the pending steps in order.
+
+Recommended flow: configure_metadata -> configure_prowlarr ->
+configure_download_client -> link Plex (plex_login_start then plex_login_poll, or
+configure_plex with a token) -> plex_discover_libraries -> configure_root_folder
+per library -> test_connections. Then search_series/add_series (pass
+provider="jikan" for anime), and monitored items auto-grab, import and scan Plex.
+For anime, series use absolute episode numbers. Prefer the plex.tv browser login
+over asking the user for a raw token."""
+
+mcp = FastMCP("llmarr", instructions=INSTRUCTIONS, lifespan=lifespan)
 
 
 def app() -> App:
@@ -63,6 +82,29 @@ def app() -> App:
 # --------------------------------------------------------------------------- #
 # Configuration
 # --------------------------------------------------------------------------- #
+@mcp.tool()
+async def setup_status(check_connections: bool = False) -> dict:
+    """Guided setup & diagnostics — CALL THIS FIRST when configuring LLMarr or
+    figuring out what's missing. Returns an ordered checklist (each step marked
+    done/pending with the exact tool to call next), enumerations of the available
+    metadata providers / download-client types / auth & import modes, and — when
+    Plex is linked — the detected libraries with suggested root-folder commands.
+    Set ``check_connections=true`` to also live-test each configured service."""
+    import asyncio
+
+    from . import setup as setupmod
+
+    plex_libraries = None
+    cfg = app().config
+    if cfg.plex.url and cfg.plex.token:
+        try:
+            plex_libraries = await asyncio.to_thread(app().plex().libraries)
+        except Exception as exc:  # noqa: BLE001
+            plex_libraries = {"error": str(exc)}
+    conns = await test_connections() if check_connections else None
+    return setupmod.build_status(app(), plex_libraries=plex_libraries, connections=conns)
+
+
 @mcp.tool()
 def get_config() -> dict:
     """Return the current configuration with secrets redacted."""
