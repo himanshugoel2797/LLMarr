@@ -105,6 +105,12 @@ in sync when adding a config step or provider/client type.
   mirror, since Jikan is being discontinued). These MAL mirrors flake with 5xx —
   the provider retries with backoff and enforces 3/s + 60/min via a shared
   `_RateLimiter`. Anime = season 1 with absolute episode numbers.
+- Season/batch packs: multi-file downloads are split per-episode on import
+  (SxxExx or anime absolute). `grab()` marks EVERY episode a pack covers as
+  grabbed via `_covered_episode_ids` (conservative: single ep, whole-season pack,
+  anime range/batch only) so `rss_poll` (which re-checks episode status each
+  iteration) won't double-grab singles while a pack downloads. `grab_season`
+  finds the best pack (covers >=2 of the season's episodes).
 - Anime absolute numbering: a provider sets `absolute_numbering=True`; add_series
   stores it on `series.absolute_numbering`. `parsing.title_matches_episode(...,
   absolute=)` and the importer dispatch to absolute parsing

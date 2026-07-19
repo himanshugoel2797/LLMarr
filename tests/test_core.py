@@ -135,6 +135,85 @@ async def test_grab_records_download_and_marks_episode(configured, fakes, monkey
     assert app.db.seen_guid("g1")
 
 
+async def test_grab_pack_marks_all_covered_episodes(configured, fakes, monkeypatch):
+    app = configured
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
+    sid = app.db.upsert_series(provider="tmdb", provider_id="1", title="Show")
+    e1 = app.db.upsert_episode(sid, 2, 1)
+    e2 = app.db.upsert_episode(sid, 2, 2)
+    e3 = app.db.upsert_episode(sid, 1, 1)  # different season, must stay missing
+
+    res = await app.grab(
+        "magnet:?xt=urn:btih:" + "a" * 40, title="Show.S02.1080p.WEB", series_id=sid
+    )
+    assert res["covered_episodes"] == 2
+    assert app.db.get_episode(e1)["status"] == "grabbed"
+    assert app.db.get_episode(e2)["status"] == "grabbed"
+    assert app.db.get_episode(e3)["status"] == "missing"  # season 1 untouched
+
+
+async def test_grab_anime_batch_marks_all(configured, fakes, monkeypatch):
+    app = configured
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
+    sid = app.db.upsert_series(
+        provider="jikan", provider_id="1", title="Frieren", absolute_numbering=1
+    )
+    eps = [app.db.upsert_episode(sid, 1, n) for n in range(1, 5)]
+    res = await app.grab(
+        "magnet:?xt=urn:btih:" + "a" * 40, title="[Group] Frieren (01-28) [Batch]", series_id=sid
+    )
+    assert res["covered_episodes"] == 4
+    assert all(app.db.get_episode(e)["status"] == "grabbed" for e in eps)
+
+
+async def test_rss_poll_no_double_grab_after_pack(configured, fakes, monkeypatch):
+    app = configured
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
+    # A season pack plus a single-episode release for the same season.
+    rels = [
+        fakes["make_release"]("Show.S01.Complete.1080p.WEB", guid="pack", seeders=100),
+        fakes["make_release"]("Show.S01E02.1080p.WEB", guid="single", seeders=100),
+    ]
+    monkeypatch.setattr(app, "prowlarr", lambda: fakes["Prowlarr"](releases=rels))
+    sid = app.db.upsert_series(provider="tmdb", provider_id="1", title="Show", monitored=1)
+    for n in (1, 2, 3):
+        e = app.db.upsert_episode(sid, 1, n)
+        app.db.execute("UPDATE episodes SET monitored=1 WHERE id=?", (e,))
+
+    result = await app.rss_poll()
+    # Exactly one grab (the pack) — the single for S01E02 must be suppressed.
+    assert len(result["grabbed"]) == 1
+    assert "S01" in result["grabbed"][0]["release"]
+    assert not app.db.seen_guid("single")
+
+
+async def test_grab_season_picks_pack(configured, fakes, monkeypatch):
+    app = configured
+    monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())
+    rels = [
+        fakes["make_release"]("Show.S02E05.1080p", guid="single", seeders=50),
+        fakes["make_release"]("Show.S02.1080p.WEB-DL.Complete", guid="pack", seeders=80),
+    ]
+    monkeypatch.setattr(app, "prowlarr", lambda: fakes["Prowlarr"](releases=rels))
+    sid = app.db.upsert_series(provider="tmdb", provider_id="1", title="Show")
+    for n in (1, 2, 3):
+        app.db.upsert_episode(sid, 2, n)
+
+    out = await app.grab_season(sid, 2)
+    assert "S02" in out["picked"] and "Complete" in out["picked"]
+    assert out["covered_episodes"] == 3
+
+
+async def test_grab_season_no_pack_found(configured, fakes, monkeypatch):
+    app = configured
+    rels = [fakes["make_release"]("Show.S02E05.1080p", guid="s")]
+    monkeypatch.setattr(app, "prowlarr", lambda: fakes["Prowlarr"](releases=rels))
+    sid = app.db.upsert_series(provider="tmdb", provider_id="1", title="Show")
+    app.db.upsert_episode(sid, 2, 5)
+    out = await app.grab_season(sid, 2)
+    assert "error" in out
+
+
 async def test_grab_movie_marks_movie(configured, fakes, monkeypatch):
     app = configured
     monkeypatch.setattr(core, "get_client", lambda cfg: fakes["DownloadClient"]())

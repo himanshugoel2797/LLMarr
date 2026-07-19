@@ -731,7 +731,9 @@ async def grab_release(
     """Send a release to the download client. ``grab_url`` may be a magnet link,
     a .torrent URL, or a Prowlarr download URL — this is how a user manually
     grabs an arbitrary torrent. Optionally link it to a library series/episode or
-    movie so it is marked grabbed and imported into Plex on completion."""
+    movie so it is imported into Plex on completion. When linked to a series, a
+    season/batch release marks every episode it covers as grabbed (so RSS won't
+    double-grab), and multi-file packs are split per-episode on import."""
     return await app().grab(
         grab_url,
         title=title,
@@ -742,6 +744,14 @@ async def grab_release(
         category=category,
         save_path=save_path,
     )
+
+
+@mcp.tool()
+async def grab_season(series_id: int, season: int, client_name: Optional[str] = None) -> dict:
+    """Find and grab the best season/batch pack for a series and link it, so every
+    episode is split into place on import and marked grabbed. For anime (single
+    entry) any season resolves to the whole-series batch."""
+    return await app().grab_season(series_id, season, client_name=client_name)
 
 
 @mcp.tool()

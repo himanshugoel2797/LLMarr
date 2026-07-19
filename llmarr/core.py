@@ -19,7 +19,15 @@ from .importer import Importer
 from .indexers.prowlarr import CAT_MOVIE, CAT_TV, ProwlarrClient, Release
 from .metadata import get_provider
 from .notify.plex import PlexNotifier
-from .parsing import parse_resolution, title_matches_episode
+from .parsing import (
+    is_batch,
+    parse_absolute_episode,
+    parse_absolute_range,
+    parse_episode,
+    parse_resolution,
+    parse_season_pack,
+    title_matches_episode,
+)
 
 
 def _folder_name(title: str, year: Optional[int]) -> str:
@@ -154,6 +162,49 @@ class App:
             "info_url": r.info_url,
         }
 
+    # -- pack coverage ------------------------------------------------------ #
+    def _covered_episode_ids(self, series: dict, title: str) -> list[int]:
+        """Episode ids a release/pack covers, inferred from its title. Kept
+        conservative so we never mark an episode grabbed that the pack lacks:
+        single episodes, whole-season packs, and anime ranges/batches only.
+        Ambiguous titles return only what matches exactly."""
+        eps = self.db.list_episodes(series["id"])
+        absolute = bool(series.get("absolute_numbering"))
+
+        def ids(pred) -> list[int]:
+            return [e["id"] for e in eps if pred(e)]
+
+        if absolute:
+            rng = parse_absolute_range(title)
+            if rng:
+                return ids(lambda e: rng[0] <= e["episode"] <= rng[1])
+            if is_batch(title):
+                return ids(lambda e: True)  # anime entry = one season; batch = all
+            n = parse_absolute_episode(title)
+            if n is not None:
+                return ids(lambda e: e["season"] == 1 and e["episode"] == n)
+            se = parse_episode(title)
+            return ids(lambda e: (e["season"], e["episode"]) == se) if se else []
+
+        se = parse_episode(title)
+        if se:
+            return ids(lambda e: (e["season"], e["episode"]) == se)
+        pack = parse_season_pack(title)
+        if pack is not None:
+            return ids(lambda e: e["season"] == pack)
+        return []
+
+    def _mark_covered_grabbed(self, series_id: int, title: str, always: list[int]) -> list[int]:
+        """Mark every episode a grab covers as 'grabbed' so the RSS poller won't
+        redundantly grab singles while a pack downloads. Returns the episode ids."""
+        covered = set(always)
+        series = self.db.get_series(series_id) if series_id else None
+        if series:
+            covered.update(self._covered_episode_ids(series, title))
+        for eid in covered:
+            self.db.set_episode_status(eid, "grabbed")
+        return sorted(covered)
+
     # -- grabbing ----------------------------------------------------------- #
     async def grab(
         self,
@@ -194,7 +245,13 @@ class App:
             size=size,
             status="grabbed",
         )
-        if episode_id:
+        covered: list[int] = []
+        if series_id:
+            # Mark the linked episode plus every other episode this pack covers.
+            covered = self._mark_covered_grabbed(
+                series_id, title, always=[episode_id] if episode_id else []
+            )
+        elif episode_id:
             self.db.set_episode_status(episode_id, "grabbed")
         if movie_id:
             self.db.set_movie_status(movie_id, "grabbed")
@@ -205,6 +262,7 @@ class App:
             "torrent_hash": torrent_hash,
             "client": name,
             "category": category,
+            "covered_episodes": len(covered),
         }
 
     # -- import / progress -------------------------------------------------- #
@@ -311,6 +369,11 @@ class App:
                 candidates.append({"series": title, "error": str(exc)})
                 continue
             for ep in missing:
+                # A pack grabbed earlier in this run may already cover this
+                # episode — re-check so we don't grab a redundant single.
+                current = self.db.get_episode(ep["id"])
+                if not current or current["status"] != "missing":
+                    continue
                 checked += 1
                 matching = [
                     r
@@ -401,3 +464,52 @@ class App:
             folder_name=folder,
         )
         return self.db.get_movie(movie_id)
+
+    # -- season packs ------------------------------------------------------- #
+    async def grab_season(
+        self, series_id: int, season: int, client_name: Optional[str] = None
+    ) -> dict:
+        """Find and grab the best pack covering a season and link it to the
+        series. On import each episode is split into place; grabbing marks every
+        covered episode as grabbed. For anime (one-season entries) any season
+        number resolves to the whole-series batch."""
+        series = self.db.get_series(series_id)
+        if not series:
+            return {"error": f"No series with id {series_id}"}
+        absolute = bool(series.get("absolute_numbering"))
+        title = series["title"]
+        query = title if absolute else f"{title} S{season:02d}"
+
+        try:
+            releases = await self.prowlarr().search(query, categories=[CAT_TV])
+        except Exception as exc:  # noqa: BLE001
+            return {"error": str(exc), "query": query}
+
+        wanted = {
+            e["id"]
+            for e in self.db.list_episodes(series_id)
+            if absolute or e["season"] == season
+        }
+        # A pack must cover at least two of the season's episodes.
+        packs = [
+            r
+            for r in releases
+            if len(set(self._covered_episode_ids(series, r.title)) & wanted) >= 2
+        ]
+        best = selector.best(packs, self.config.quality)
+        if not best or not best.grab_url:
+            return {
+                "error": "No season pack found",
+                "query": query,
+                "candidates": [r.title for r in releases[:10]],
+            }
+        res = await self.grab(
+            best.grab_url,
+            title=best.title,
+            series_id=series_id,
+            indexer=best.indexer,
+            size=best.size,
+            guid=best.guid,
+            client_name=client_name,
+        )
+        return {"picked": best.title, **res}
