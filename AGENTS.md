@@ -25,17 +25,20 @@ llmarr/
   config.py      pydantic models + ConfigStore (YAML, thread-safe, secret redaction)
   db.py          SQLite: series, episodes, movies, downloads, grab_history, kv (+ migrations)
   pathmap.py     translate() paths between container namespaces (single-host = passthrough)
-  metadata/      MetadataProvider ABC + TMDB (TV + movies)
+  metadata/      MetadataProvider ABC + TMDB (TV+movies) + Jikan/Tenrai (anime)
   indexers/      Prowlarr search client + Release model
-  download/      DownloadClient ABC + qBittorrent
-  notify/        Plex library scan
+  download/      DownloadClient ABC + qBittorrent (resolves .torrent host-side)
+  notify/        Plex library scan + catalog + show_episodes
   importer.py    hardlink/copy/move into <root>/Show (Year)/Season NN/… + movie layout
   selector.py    quality filter + ranking (lightweight, NOT Sonarr custom formats)
-  parsing.py     SxxExx / season-pack / resolution parsing
+  parsing.py     SxxExx / season-pack / resolution / anime absolute+range parsing
   core.py        App engine — the glue used by BOTH tools and the RSS poller
   rss/poller.py  asyncio background loop (auto-grab + import), reads config each tick
-  auth.py        static bearer-token middleware for the HTTP transport
-  server.py      FastMCP instance + all ~45 tools + lifespan (starts poller)
+  auth.py        mode-aware bearer/OAuth middleware for the HTTP transport
+  oauth.py       self-contained OAuth 2.1 authorization + resource server
+  plexauth.py    plex.tv PIN (browser) login flow
+  setup.py       build_status() — powers the setup_status onboarding tool
+  server.py      FastMCP instance + all ~54 tools + lifespan (starts poller)
   __main__.py    stdio (default) or streamable-http entrypoint
 ```
 
@@ -55,7 +58,7 @@ in sync when adding a config step or provider/client type.
 - **Single-host by default.** `config.single_host=True` → `pathmap.translate`
   passes unmapped paths through unchanged, so a normal one-host install needs
   **zero path mappings**. Split-container installs set it false and define
-  mappings; unmapped paths then raise. The author runs single-host.
+  mappings; unmapped paths then raise.
 - **Path contexts** are arbitrary labels grouped per physical dir. The download
   client's context label is always `"qbittorrent"`; the importer works in
   `importer.work_context` (default `"local"`) — the namespace LLMarr itself can
@@ -86,8 +89,9 @@ in sync when adding a config step or provider/client type.
   (`app.provider`, `app.prowlarr`, `app.plex`) — except `grab`/`refresh` which
   construct the download client via `core.get_client`, so patch
   `llmarr.core.get_client` there.
-- `@mcp.tool()` returns the **plain function**, so server tools are called
-  directly in tests after `monkeypatch.setattr(server.state, "app", app)`.
+- Tools register via `@tool` (`server.py`, = `@mcp.tool()` + `_guard`), which
+  returns a **plain callable**, so server tools are invoked directly in tests
+  after `monkeypatch.setattr(server.state, "app", app)`.
 - The importer is tested against **real files + real hardlinks** (inode checks).
 
 ## Specials & download progress
@@ -105,7 +109,12 @@ in sync when adding a config step or provider/client type.
 - `db.upsert_episode` / `upsert_movie` deliberately do NOT overwrite
   `status`/`file_path` on metadata refresh — only title/air_date update.
 - Secrets (`api_key`, `token`, `password`, `auth_token`) are masked by
-  `get_config`; reveal the auth token via the dedicated `get_auth_token` tool.
+  `get_config`; reveal the HTTP bearer token via `auth_token("get")`.
+- Download links: `qBittorrentClient.add` resolves non-magnet URLs host-side
+  (`_resolve_torrent`) — follows a redirect to a magnet, else fetches the
+  `.torrent` bytes and adds them as a FILE. This is because the client is often
+  containerised (e.g. behind a VPN) and can't reach the indexer/Prowlarr URL that
+  LLMarr can. Keep new download clients doing the same.
 - The RSS poller re-reads config each tick, so config changes apply without a
   restart (except the HTTP auth token, which is bound at server start).
 - Metadata providers: `tmdb` (TV+movies, key) and `jikan` (anime, no key).
@@ -164,7 +173,9 @@ in sync when adding a config step or provider/client type.
 - Full Sonarr custom-format quality profiles.
 - Double-episode file parsing (`S01E01E02`).
 - Download clients beyond qBittorrent (Transmission/Deluge) via `DownloadClient`.
-- Lidarr-style music. OAuth for MCP clients that require it.
+- Lidarr-style music.
+- Bulk-activate episodes for a catalogued Plex import (currently one-at-a-time
+  via `activate_series`).
 
 ## Deploy / run
 

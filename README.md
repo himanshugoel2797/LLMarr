@@ -309,9 +309,16 @@ credentials or running services are required.
 
 ## Scope / status
 
-Supports **TV and movies** via qBittorrent + Prowlarr + Plex + TMDB, with
-hardlink/copy/move import into an organised library. The
+Supports **TV, movies, and anime** via qBittorrent + Prowlarr + Plex, with
+metadata from TMDB (TV/movies) or a Jikan-compatible API (anime, no key).
+Features: hardlink/copy/move import into an organised library, season/batch
+packs, specials (season 0), RSS auto-grab, browser-based Plex login, importing an
+existing Plex library, download-queue progress + cancel, guided onboarding
+(`setup_status`), and OAuth 2.1 for claude.ai custom connectors / mobile. The
 provider/indexer/download-client/notifier interfaces are abstract so other
-clients (Transmission, Deluge) and metadata sources can be added without touching
-the core. Not yet implemented: full Sonarr custom-format quality profiles,
-multi-episode-file (double-episode) parsing, and clients other than qBittorrent.
+clients (Transmission, Deluge) and metadata sources slot in without touching the
+core.
+
+**Not yet implemented:** full Sonarr custom-format quality profiles,
+multi-episode-file (double-episode) parsing, download clients other than
+qBittorrent, and Lidarr-style music.
