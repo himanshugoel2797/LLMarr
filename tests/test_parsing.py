@@ -21,6 +21,20 @@ def test_parse_episode(title, expected):
 @pytest.mark.parametrize(
     "title,expected",
     [
+        ("Show.S01E01E02.1080p.WEB.mkv", [(1, 1), (1, 2)]),
+        ("Show.S01E01-E02.mkv", [(1, 1), (1, 2)]),
+        ("Show 1x01x02", [(1, 1), (1, 2)]),
+        ("Meridian.S02E01.1080p", [(2, 1)]),  # single falls through
+        ("Random.Movie.2021.1080p", []),
+    ],
+)
+def test_parse_multi_episode(title, expected):
+    assert parsing.parse_multi_episode(title) == expected
+
+
+@pytest.mark.parametrize(
+    "title,expected",
+    [
         ("Show.S03.1080p.COMPLETE", 3),
         ("Show Season 2 1080p", 2),
         ("Show.S03E04.1080p", None),  # single episode, not a pack

@@ -25,7 +25,11 @@ from typing import Optional
 from pydantic import BaseModel
 
 from . import pathmap
-from .parsing import parse_absolute_episode, parse_episode
+from .parsing import parse_absolute_episode, parse_episode, parse_multi_episode
+
+# Subtitle sidecars imported alongside their video (kept in step with the video's
+# renamed base name, preserving any language/flag suffix like ".en" / ".forced").
+SUBTITLE_EXTENSIONS = {".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt"}
 
 
 class ImportedFile(BaseModel):
@@ -120,6 +124,40 @@ class Importer:
                 return "copy"
             raise
 
+    # -- subtitle sidecars -------------------------------------------------- #
+    def _sidecar_subs(self, video: Path) -> list[Path]:
+        """Subtitle files sitting next to ``video`` that belong to it (same stem,
+        optionally followed by a language/flag suffix)."""
+        try:
+            siblings = [p for p in video.parent.iterdir() if p.is_file()]
+        except OSError:
+            return []
+        stem = video.stem
+        out = []
+        for p in siblings:
+            if p.suffix.lower() not in SUBTITLE_EXTENSIONS:
+                continue
+            if p.stem == stem or p.stem.startswith(stem + "."):
+                out.append(p)
+        return out
+
+    def _place_subs(self, video: Path, dst: Path, result: ImportResult,
+                    season=None, episode=None, episode_id=None) -> None:
+        """Hardlink/copy each subtitle sidecar next to the placed video, matching
+        the video's (possibly renamed) base name and keeping its language suffix."""
+        for sub in self._sidecar_subs(video):
+            remainder = sub.name[len(video.stem):]  # e.g. ".en.srt" or ".srt"
+            sub_dst = dst.with_name(dst.stem + remainder)
+            try:
+                action = self._place(sub, sub_dst)
+            except OSError as exc:
+                result.errors.append(f"{sub.name}: {exc}")
+                continue
+            result.imported.append(
+                ImportedFile(source=str(sub), destination=str(sub_dst), action=action,
+                             season=season, episode=episode, episode_id=episode_id)
+            )
+
     # -- entry point -------------------------------------------------------- #
     def import_download(self, download: dict, content_path: Optional[str]) -> ImportResult:
         result = ImportResult()
@@ -169,30 +207,44 @@ class Importer:
                 # Anime files use absolute numbers ([Group] Show - 12); map to
                 # season 1. Fall back to SxxExx if the file happens to use it.
                 n = parse_absolute_episode(video.name)
-                se = (1, n) if n is not None else parse_episode(video.name)
+                pairs = [(1, n)] if n is not None else parse_multi_episode(video.name)
             else:
-                se = parse_episode(video.name)
-            if se:
-                season, episode = se
-                ep = self.app.db.query_one(
-                    "SELECT * FROM episodes WHERE series_id=? AND season=? AND episode=?",
-                    (series["id"], season, episode),
-                )
+                # parse_multi_episode handles both single (S01E01) and
+                # double/multi-episode files (S01E01E02 / S01E01-E02).
+                pairs = parse_multi_episode(video.name)
+
+            eps = []
+            if pairs:
+                for season, episode in pairs:
+                    row = self.app.db.query_one(
+                        "SELECT * FROM episodes WHERE series_id=? AND season=? AND episode=?",
+                        (series["id"], season, episode),
+                    )
+                    if row:
+                        eps.append(row)
+                if not eps:
+                    s0, e0 = pairs[0]
+                    result.skipped.append(f"{video.name}: S{s0:02d}E{e0:02d} not in library")
+                    continue
             elif linked_episode_id and len(videos) == 1:
                 ep = self.app.db.get_episode(linked_episode_id)
-                season, episode = (ep["season"], ep["episode"]) if ep else (None, None)
-            else:
-                result.skipped.append(f"{video.name}: no S/E in name and not a single linked episode")
-                continue
-            if not ep:
-                result.skipped.append(f"{video.name}: S{season:02d}E{episode:02d} not in library")
+                if ep:
+                    eps = [ep]
+            if not eps:
+                result.skipped.append(
+                    f"{video.name}: no S/E in name and not a single linked episode"
+                )
                 continue
 
+            season = eps[0]["season"]
             season_dir = series_dir / f"Season {season:02d}"
             if self.cfg.rename:
-                title = f" - {_sanitize(ep['title'])}" if ep.get("title") else ""
-                base = f"{_sanitize(series['title'])} - S{season:02d}E{episode:02d}{title}"
-                fname = base + video.suffix.lower()
+                if len(eps) > 1:
+                    span = f"S{season:02d}" + "".join(f"E{e['episode']:02d}" for e in eps)
+                else:
+                    span = f"S{season:02d}E{eps[0]['episode']:02d}"
+                title = f" - {_sanitize(eps[0]['title'])}" if eps[0].get("title") else ""
+                fname = f"{_sanitize(series['title'])} - {span}{title}" + video.suffix.lower()
             else:
                 fname = video.name
             dst = season_dir / fname
@@ -201,13 +253,17 @@ class Importer:
             except OSError as exc:
                 result.errors.append(f"{video.name}: {exc}")
                 continue
-            self.app.db.set_episode_status(ep["id"], "downloaded", str(dst))
-            result.imported.append(
-                ImportedFile(
-                    source=str(video), destination=str(dst), action=action,
-                    season=season, episode=episode, episode_id=ep["id"],
+            # One physical file covers every episode it spans — mark them all.
+            for ep in eps:
+                self.app.db.set_episode_status(ep["id"], "downloaded", str(dst))
+                result.imported.append(
+                    ImportedFile(
+                        source=str(video), destination=str(dst), action=action,
+                        season=ep["season"], episode=ep["episode"], episode_id=ep["id"],
+                    )
                 )
-            )
+            self._place_subs(video, dst, result, season=season,
+                             episode=eps[0]["episode"], episode_id=eps[0]["id"])
             scan_dirs.add(str(season_dir))
         result.scan_paths = sorted(scan_dirs)
         return result
@@ -225,21 +281,36 @@ class Importer:
             )
             return result
         movie_dir = dest_root / _sanitize(movie["folder_name"] or movie["title"])
-        # Largest video file is the feature; ignore extras.
-        feature = max(videos, key=lambda p: p.stat().st_size)
-        if self.cfg.rename:
-            fname = _sanitize(movie["folder_name"] or movie["title"]) + feature.suffix.lower()
-        else:
-            fname = feature.name
-        dst = movie_dir / fname
-        try:
-            action = self._place(feature, dst)
-        except OSError as exc:
-            result.errors.append(f"{feature.name}: {exc}")
+        base = _sanitize(movie["folder_name"] or movie["title"])
+        # A movie "pack" can hold several feature-length files (e.g. a trilogy).
+        # Import every feature-sized file (>= half the largest), skipping extras.
+        by_size = sorted(videos, key=lambda p: p.stat().st_size, reverse=True)
+        largest = by_size[0].stat().st_size
+        features = [p for p in by_size if p.stat().st_size >= largest * 0.5]
+
+        primary_dst = None
+        for idx, feature in enumerate(features):
+            if self.cfg.rename:
+                # The largest keeps the clean "Title (Year)" name; extra features
+                # get a distinguishing suffix so they don't collide.
+                suffix = "" if idx == 0 else f" - {_sanitize(feature.stem)}"
+                fname = base + suffix + feature.suffix.lower()
+            else:
+                fname = feature.name
+            dst = movie_dir / fname
+            try:
+                action = self._place(feature, dst)
+            except OSError as exc:
+                result.errors.append(f"{feature.name}: {exc}")
+                continue
+            if primary_dst is None:
+                primary_dst = str(dst)
+            result.imported.append(
+                ImportedFile(source=str(feature), destination=str(dst), action=action)
+            )
+            self._place_subs(feature, dst, result)
+        if primary_dst is None:
             return result
-        self.app.db.set_movie_status(movie["id"], "downloaded", str(dst))
-        result.imported.append(
-            ImportedFile(source=str(feature), destination=str(dst), action=action)
-        )
+        self.app.db.set_movie_status(movie["id"], "downloaded", primary_dst)
         result.scan_paths = [str(movie_dir)]
         return result

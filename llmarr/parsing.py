@@ -8,6 +8,9 @@ from typing import Optional
 # S01E02, s1e2, 1x02
 _SXXEXX = re.compile(r"[Ss](\d{1,2})[\. _-]?[Ee](\d{1,3})")
 _NxNN = re.compile(r"(?<![\dA-Za-z])(\d{1,2})[xX](\d{1,3})(?![\d])")
+# Double/multi-episode files: S01E01E02, S01E01-E02, 1x01x02.
+_MULTI_SXXEXX = re.compile(r"[Ss](\d{1,2})((?:[\. _-]?[Ee]\d{1,3}){2,})")
+_MULTI_NxNN = re.compile(r"(?<![\dA-Za-z])(\d{1,2})((?:[xX]\d{1,3}){2,})(?![\d])")
 # Whole-season packs: "Season 1", "S01" with no episode, "Complete". The boundary
 # before S keeps audio tags like "DTS5.1" (T precedes S) from parsing as "Season 5".
 _SEASON_ONLY = re.compile(r"(?<![A-Za-z0-9])[Ss](?:eason[ ._-]?)?(\d{1,2})(?![Ee\dxX])")
@@ -45,6 +48,24 @@ def parse_episode(title: str) -> Optional[tuple[int, int]]:
     if m:
         return int(m.group(1)), int(m.group(2))
     return None
+
+
+def parse_multi_episode(title: str) -> list[tuple[int, int]]:
+    """Return every (season, episode) a title names — handling double/multi-episode
+    files like ``S01E01E02`` or ``S01E01-E02`` (→ [(1,1),(1,2)]). Falls back to the
+    single-episode result, or ``[]`` if none is found."""
+    m = _MULTI_SXXEXX.search(title)
+    if m:
+        season = int(m.group(1))
+        nums = [int(n) for n in re.findall(r"[Ee](\d{1,3})", m.group(2))]
+        return [(season, n) for n in nums]
+    m = _MULTI_NxNN.search(title)
+    if m:
+        season = int(m.group(1))
+        nums = [int(n) for n in re.findall(r"[xX](\d{1,3})", m.group(0))]
+        return [(season, n) for n in nums]
+    se = parse_episode(title)
+    return [se] if se else []
 
 
 def parse_season_pack(title: str) -> Optional[int]:

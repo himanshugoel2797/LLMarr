@@ -141,6 +141,12 @@ in sync when adding a config step or provider/client type.
   mirror, since Jikan is being discontinued). These MAL mirrors flake with 5xx —
   the provider retries with backoff and enforces 3/s + 60/min via a shared
   `_RateLimiter`. Anime = season 1 with absolute episode numbers.
+- Importer completeness (G7): subtitle sidecars (`SUBTITLE_EXTENSIONS`) are
+  imported next to their video, matching its renamed base name and keeping any
+  language/flag suffix; double/multi-episode files (`S01E01E02` / `S01E01-E02`,
+  via `parsing.parse_multi_episode`) hardlink/copy the single file once and mark
+  every episode it spans downloaded; movie packs import every feature-sized file
+  (>= half the largest), the largest keeping the clean `Title (Year)` name.
 - Season/batch packs: multi-file downloads are split per-episode on import
   (SxxExx or anime absolute). `grab()` marks EVERY episode a pack covers as
   grabbed via `_covered_episode_ids` (conservative: single ep, whole-season pack,
@@ -192,8 +198,7 @@ in sync when adding a config step or provider/client type.
 
 ## Not yet implemented (good next tasks)
 
-- Full Sonarr custom-format quality profiles.
-- Double-episode file parsing (`S01E01E02`).
+- Full Sonarr custom-format quality profiles + quality-upgrade replacement.
 - Download clients beyond qBittorrent (Transmission/Deluge) via `DownloadClient`.
 - Lidarr-style music.
 - (Done — G6) Bulk-activate catalogued Plex imports: `bulk_activate_series`

@@ -212,6 +212,64 @@ def test_anime_absolute_numbered_import(library):
     assert "Season 01" in res.imported[0].destination
 
 
+def test_double_episode_file_marks_both(library):
+    app, dl, lib = library
+    sid = app.db.upsert_series(
+        provider="tmdb", provider_id="1", title="Show", root_folder="tv", folder_name="Show"
+    )
+    e1 = app.db.upsert_episode(sid, 1, 1, title="One")
+    e2 = app.db.upsert_episode(sid, 1, 2, title="Two")
+    write(dl / "Show.S01E01E02.1080p.WEB.mkv")
+    d = {"id": 1, "series_id": sid, "episode_id": None, "movie_id": None}
+    res = app.importer.import_download(d, "/downloads/Show.S01E01E02.1080p.WEB.mkv")
+    # both episodes marked downloaded, pointing at the one physical file
+    assert app.db.get_episode(e1)["status"] == "downloaded"
+    assert app.db.get_episode(e2)["status"] == "downloaded"
+    dests = {i.destination for i in res.imported}
+    assert len(dests) == 1  # single file
+    assert "S01E01E02" in next(iter(dests))
+    assert {(i.season, i.episode) for i in res.imported} == {(1, 1), (1, 2)}
+
+
+def test_subtitle_sidecars_imported(library):
+    app, dl, lib = library
+    sid = app.db.upsert_series(
+        provider="tmdb", provider_id="1", title="Show", root_folder="tv", folder_name="Show"
+    )
+    e = app.db.upsert_episode(sid, 1, 1, title="Pilot")
+    write(dl / "Show.S01E01.WEB.mkv")
+    write(dl / "Show.S01E01.WEB.en.srt")
+    write(dl / "Show.S01E01.WEB.srt")
+    write(dl / "unrelated.srt")  # different stem -> not imported
+    d = {"id": 1, "series_id": sid, "episode_id": e, "movie_id": None}
+    res = app.importer.import_download(d, "/downloads/Show.S01E01.WEB.mkv")
+    names = {Path(i.destination).name for i in res.imported}
+    assert "Show - S01E01 - Pilot.mkv" in names
+    assert "Show - S01E01 - Pilot.en.srt" in names
+    assert "Show - S01E01 - Pilot.srt" in names
+    assert not any(n.startswith("unrelated") for n in names)
+
+
+def test_movie_pack_imports_all_features(library):
+    app, dl, lib = library
+    mid = app.db.upsert_movie(
+        provider="tmdb", provider_id="9", title="Trilogy", year=2021,
+        root_folder="mv", folder_name="Trilogy (2021)",
+    )
+    mdir = dl / "Trilogy.Collection"
+    write(mdir / "Trilogy.Part1.1080p.mkv", size=5000)
+    write(mdir / "Trilogy.Part2.1080p.mkv", size=4800)
+    write(mdir / "Trilogy.Part3.1080p.mkv", size=5200)
+    write(mdir / "featurette.mkv", size=200)  # extra -> skipped
+    d = {"id": 1, "series_id": None, "episode_id": None, "movie_id": mid}
+    res = app.importer.import_download(d, "/downloads/Trilogy.Collection")
+    names = sorted(Path(i.destination).name for i in res.imported)
+    assert len(names) == 3  # three features, featurette skipped
+    assert "Trilogy (2021).mkv" in names  # largest keeps the clean name
+    assert all("featurette" not in n for n in names)
+    assert app.db.get_movie(mid)["movie_status"] == "downloaded"
+
+
 def test_missing_video_files_skipped(library):
     app, dl, lib = library
     sid = app.db.upsert_series(
