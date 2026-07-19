@@ -106,29 +106,48 @@ dance.
 
 ## Remote access via Cloudflare Tunnel
 
-The HTTP server binds `127.0.0.1:8000` with the MCP endpoint at **`/mcp`**. Run
-`cloudflared` on the same machine and point it at the local service — no ports
-need to be opened, and Cloudflare terminates TLS while the bearer token
-authenticates the MCP client.
+The HTTP server's MCP endpoint is at **`/mcp`**. Cloudflare terminates TLS and
+the bearer token authenticates the client, so no inbound ports are opened to the
+internet. What `cloudflared`'s ingress points at depends on where it runs.
 
-Quick tunnel (ephemeral hostname, good for testing):
+**Bind address matters.** The default `LLMARR_HOST=127.0.0.1` only accepts
+connections from the *same* machine. Set the host to something the cloudflared
+process can reach.
+
+### cloudflared on the same machine
 
 ```bash
-LLMARR_TRANSPORT=streamable-http llmarr           # terminal 1: binds 127.0.0.1:8000
-cloudflared tunnel --url http://localhost:8000    # terminal 2: prints a *.trycloudflare.com URL
+LLMARR_TRANSPORT=streamable-http llmarr            # binds 127.0.0.1:8000
+cloudflared tunnel --url http://localhost:8000     # quick tunnel, or a named tunnel
 ```
 
-Named tunnel (stable hostname, for prod) — in your tunnel's ingress config:
+### cloudflared on a different host / VM (common)
+
+Bind an interface the other host can reach, and point ingress at *this* host's IP
+— `localhost` in the tunnel config would resolve to the cloudflared box, not
+LLMarr:
+
+```bash
+LLMARR_TRANSPORT=streamable-http LLMARR_HOST=0.0.0.0 LLMARR_PORT=8000 llmarr
+```
 
 ```yaml
+# cloudflared ingress (on the other VM). Replace with this host's LAN IP.
 ingress:
   - hostname: llmarr.example.com
-    service: http://localhost:8000
+    service: http://10.0.0.10:8000
   - service: http_status:404
 ```
 
-Either way the URL you give your MCP client is the tunnel hostname **plus
-`/mcp`**, with the token from the server's startup banner:
+`0.0.0.0` exposes port 8000 to the LAN — the bearer token is the protection.
+Tighten it by binding the specific NIC (`LLMARR_HOST=10.0.0.10`) and/or a
+firewall rule allowing only the cloudflared host, e.g.
+`ufw allow from <cloudflared-ip> to any port 8000`.
+
+### Client config
+
+Whatever the topology, the URL is the tunnel hostname **+ `/mcp`**, with the
+token from the server's startup banner:
 
 ```json
 {
@@ -140,9 +159,6 @@ Either way the URL you give your MCP client is the tunnel hostname **plus
   }
 }
 ```
-
-Keep `LLMARR_HOST=127.0.0.1` (the default) so the service is reachable only
-through the tunnel, not on your LAN.
 
 ## First-run setup (all via tools)
 
