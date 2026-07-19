@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS series (
     root_folder   TEXT,
     folder_name   TEXT,
     absolute_numbering INTEGER NOT NULL DEFAULT 0,
+    last_refresh  REAL,                              -- last metadata re-fetch (G1)
+    plex_rating_key TEXT,                            -- Plex identity from import (G5)
+    plex_section  TEXT,
     added_at      REAL NOT NULL,
     UNIQUE(provider, provider_id)
 );
@@ -141,6 +144,14 @@ class Database:
             self._conn.execute(
                 "ALTER TABLE series ADD COLUMN absolute_numbering INTEGER NOT NULL DEFAULT 0"
             )
+        if "last_refresh" not in scols:
+            # When metadata was last re-fetched (G1 periodic refresh). NULL = never.
+            self._conn.execute("ALTER TABLE series ADD COLUMN last_refresh REAL")
+        if "plex_rating_key" not in scols:
+            # Plex identity captured on import_from_plex (G5), for reliable lookups.
+            self._conn.execute("ALTER TABLE series ADD COLUMN plex_rating_key TEXT")
+        if "plex_section" not in scols:
+            self._conn.execute("ALTER TABLE series ADD COLUMN plex_section TEXT")
 
     # -- low level ---------------------------------------------------------- #
     def execute(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:

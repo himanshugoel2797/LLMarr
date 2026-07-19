@@ -54,7 +54,11 @@ class RssPoller:
 
     async def poll_once(self) -> dict:
         try:
+            # First pick up newly-aired episodes for still-airing monitored series,
+            # so rss_poll can grab them in the same tick.
+            refreshed = await self.app.refresh_stale_series()
             result = await self.app.rss_poll()
+            result["refreshed_series"] = refreshed
             # Opportunistically progress/import active downloads too.
             result["imports"] = await self.app.refresh_downloads()
             self.last_result = result

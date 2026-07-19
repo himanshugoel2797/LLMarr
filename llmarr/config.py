@@ -132,6 +132,9 @@ class RssConfig(BaseModel):
     # Grab automatically when a monitored+missing episode is matched, otherwise
     # only record candidates for the LLM to review.
     auto_grab: bool = True
+    # How often the poller re-fetches provider metadata for monitored, still-airing
+    # series to pick up newly-aired episodes (G1). 0 disables periodic refresh.
+    refresh_interval_hours: int = Field(default=12, ge=0)
 
 
 class ImportConfig(BaseModel):

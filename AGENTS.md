@@ -117,6 +117,14 @@ in sync when adding a config step or provider/client type.
   LLMarr can. Keep new download clients doing the same.
 - The RSS poller re-reads config each tick, so config changes apply without a
   restart (except the HTTP auth token, which is bound at server start).
+- Periodic metadata refresh (G1): `App.refresh_series(series_id)` re-fetches
+  provider metadata and upserts newly-aired episodes (new regular eps monitored
+  iff the series is monitored, specials left unmonitored; existing episodes' and
+  the series' status/monitored/root_folder are never touched). `poll_once` calls
+  `App.refresh_stale_series` first, refreshing monitored non-ended series
+  (`status` not in `App.ENDED_STATUSES`) not refreshed within
+  `rss.refresh_interval_hours` (default 12, 0 disables); `series.last_refresh`
+  stamps the time. Tool: `refresh_series`.
 - Metadata providers: `tmdb` (TV+movies, key) and `jikan` (anime, no key).
   `get_provider(config, name)` selects one; tools take a `provider=` arg. The
   `jikan` provider hits a Jikan-compatible API whose base URL is

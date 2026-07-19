@@ -202,6 +202,98 @@ async def test_rss_picks_second_best_when_top_seen(configured, fakes, monkeypatc
     assert result["grabbed"][0]["release"] == "Show.S01E01.1080p.WEBRip"  # the unseen one
 
 
+# --------------------------------------------------------------------------- #
+# refresh_series (G1)
+# --------------------------------------------------------------------------- #
+async def test_refresh_series_adds_new_episodes(app, fakes, monkeypatch):
+    info1 = SeriesInfo(provider="tmdb", provider_id="1", title="Show", status="Continuing",
+                       seasons=[1], episodes=[EpisodeInfo(season=1, episode=1)])
+    monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](series_info=info1))
+    r = await app.add_series("1")
+    sid = r["id"]
+    # a new episode airs later
+    info2 = SeriesInfo(provider="tmdb", provider_id="1", title="Show", status="Continuing",
+                       seasons=[1], episodes=[EpisodeInfo(season=1, episode=1),
+                                              EpisodeInfo(season=1, episode=2)])
+    monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](series_info=info2))
+    res = await app.refresh_series(sid)
+    assert res["new_episodes"] == 1 and res["added"] == ["S01E02"]
+    mon = {(e["season"], e["episode"]): e["monitored"] for e in app.db.list_episodes(sid)}
+    assert mon[(1, 2)] == 1  # new regular ep monitored (series monitored)
+    assert app.db.get_series(sid)["last_refresh"] is not None
+
+
+async def test_refresh_series_preserves_existing_and_specials(app, fakes, monkeypatch):
+    info1 = SeriesInfo(provider="tmdb", provider_id="1", title="Show", status="Continuing",
+                       seasons=[1], episodes=[EpisodeInfo(season=1, episode=1)])
+    monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](series_info=info1))
+    sid = (await app.add_series("1"))["id"]
+    # user grabs/imports ep1 and unmonitors it
+    e1 = app.db.list_episodes(sid)[0]
+    app.db.set_episode_status(e1["id"], "downloaded", "/x.mkv")
+    app.db.execute("UPDATE episodes SET monitored=0 WHERE id=?", (e1["id"],))
+    # refresh brings a new special + a new regular ep
+    info2 = SeriesInfo(provider="tmdb", provider_id="1", title="Show", status="Continuing",
+                       seasons=[0, 1], episodes=[EpisodeInfo(season=1, episode=1),
+                                                 EpisodeInfo(season=0, episode=1),
+                                                 EpisodeInfo(season=1, episode=2)])
+    monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](series_info=info2))
+    await app.refresh_series(sid)
+    m = {(e["season"], e["episode"]): e for e in app.db.list_episodes(sid)}
+    assert m[(1, 1)]["status"] == "downloaded" and m[(1, 1)]["monitored"] == 0  # untouched
+    assert m[(0, 1)]["monitored"] == 0  # special unmonitored
+    assert m[(1, 2)]["monitored"] == 1
+
+
+async def test_refresh_series_unmonitored_series_new_ep_unmonitored(app, fakes, monkeypatch):
+    info1 = SeriesInfo(provider="tmdb", provider_id="1", title="Show", status="Continuing",
+                       seasons=[1], episodes=[EpisodeInfo(season=1, episode=1)])
+    monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](series_info=info1))
+    sid = (await app.add_series("1", monitored=False))["id"]
+    info2 = SeriesInfo(provider="tmdb", provider_id="1", title="Show", status="Continuing",
+                       seasons=[1], episodes=[EpisodeInfo(season=1, episode=1),
+                                              EpisodeInfo(season=1, episode=2)])
+    monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](series_info=info2))
+    await app.refresh_series(sid)
+    mon = {(e["season"], e["episode"]): e["monitored"] for e in app.db.list_episodes(sid)}
+    assert mon[(1, 2)] == 0  # series unmonitored -> new ep unmonitored
+
+
+async def test_refresh_stale_skips_ended_and_recent(app, fakes, monkeypatch):
+    info = SeriesInfo(provider="tmdb", provider_id="1", title="Ended Show", status="Ended",
+                      seasons=[1], episodes=[EpisodeInfo(season=1, episode=1)])
+    monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](series_info=info))
+    # An ended, monitored series is not refreshed.
+    app.db.upsert_series(provider="tmdb", provider_id="1", title="Ended Show",
+                         monitored=1, status="Ended")
+    # A recently-refreshed airing series is skipped too.
+    import time as _t
+    sid2 = app.db.upsert_series(provider="tmdb", provider_id="2", title="Fresh",
+                                monitored=1, status="Continuing", last_refresh=_t.time())
+    out = await app.refresh_stale_series()
+    assert out == []
+
+
+async def test_refresh_stale_refreshes_airing(app, fakes, monkeypatch):
+    info = SeriesInfo(provider="tmdb", provider_id="1", title="Airing", status="Continuing",
+                      seasons=[1], episodes=[EpisodeInfo(season=1, episode=1),
+                                             EpisodeInfo(season=1, episode=2)])
+    monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](series_info=info))
+    sid = app.db.upsert_series(provider="tmdb", provider_id="1", title="Airing",
+                               monitored=1, status="Continuing")
+    app.db.upsert_episode(sid, 1, 1)  # only ep1 known so far
+    out = await app.refresh_stale_series()
+    assert len(out) == 1 and out[0]["new_episodes"] == 1
+    assert {(e["season"], e["episode"]) for e in app.db.list_episodes(sid)} == {(1, 1), (1, 2)}
+
+
+async def test_refresh_stale_disabled_when_interval_zero(app, fakes, monkeypatch):
+    app.store.mutate(lambda c: setattr(c.rss, "refresh_interval_hours", 0))
+    app.db.upsert_series(provider="tmdb", provider_id="1", title="Airing",
+                         monitored=1, status="Continuing")
+    assert await app.refresh_stale_series() == []
+
+
 async def test_add_movie(app, fakes, monkeypatch):
     info = MovieInfo(provider="tmdb", provider_id="9", title="Nebula", year=2021)
     monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](movie_info=info))

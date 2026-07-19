@@ -404,8 +404,11 @@ def configure_rss(
     enabled: Optional[bool] = None,
     interval_minutes: Optional[int] = None,
     auto_grab: Optional[bool] = None,
+    refresh_interval_hours: Optional[int] = None,
 ) -> dict:
-    """Configure the background RSS/auto-grab loop and (re)start or stop it."""
+    """Configure the background RSS/auto-grab loop and (re)start or stop it.
+    ``refresh_interval_hours`` controls how often the poller re-fetches metadata
+    for still-airing monitored series to pick up new episodes (0 disables it)."""
     def _m(c):
         if enabled is not None:
             c.rss.enabled = enabled
@@ -413,6 +416,8 @@ def configure_rss(
             c.rss.interval_minutes = interval_minutes
         if auto_grab is not None:
             c.rss.auto_grab = auto_grab
+        if refresh_interval_hours is not None:
+            c.rss.refresh_interval_hours = refresh_interval_hours
     app().store.mutate(_m)
     if app().config.rss.enabled:
         state.poller.start()
@@ -653,6 +658,17 @@ async def activate_series(
     return await app().activate_series(
         series_id, provider=provider, provider_id=provider_id, mark_downloaded=mark_downloaded
     )
+
+
+@tool
+async def refresh_series(series_id: int) -> dict:
+    """Re-fetch provider metadata for a library series and add any newly-aired
+    episodes (new regular episodes are monitored iff the series is monitored;
+    specials stay unmonitored). Existing episodes' status/monitored flags and the
+    series' monitored/root-folder choices are never touched. The RSS poller does
+    this automatically for still-airing monitored series (see
+    rss.refresh_interval_hours); call this to force it now."""
+    return await app().refresh_series(series_id)
 
 
 @tool

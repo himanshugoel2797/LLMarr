@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import re
 import sqlite3
+import time
 from typing import Optional
 
 from . import pathmap, selector
@@ -144,6 +145,91 @@ class App:
         return self.db.get_series(series_id) | {
             "episode_count": len(info.episodes)
         }
+
+    # -- periodic metadata refresh (G1) ------------------------------------- #
+    # Statuses that mean a series will not gain new episodes, so refresh can skip
+    # it (TMDB uses "Ended"/"Canceled"; jikan uses "Finished Airing").
+    ENDED_STATUSES = {"ended", "finished airing", "canceled", "cancelled"}
+
+    async def refresh_series(self, series_id: int) -> dict:
+        """Re-fetch provider metadata for an existing series and upsert any newly
+        aired episodes. Never clobbers existing episodes' status/monitored flags,
+        and never resets series-level monitored/root_folder — only refreshes
+        metadata (title/year/overview/status/poster) and adds new episodes. New
+        regular episodes are monitored iff the series is monitored; specials
+        (season 0) are left unmonitored (mirrors add_series)."""
+        series = self.db.get_series(series_id)
+        if not series:
+            return {"error": f"No series with id {series_id}"}
+        if series["provider"] == "plex":
+            return {
+                "error": "This series was catalogued from Plex without a metadata id; "
+                "activate it with activate_series before it can be refreshed."
+            }
+        prov = self.provider(series["provider"])
+        info = await prov.get_series(series["provider_id"])
+        monitored = bool(series["monitored"])
+
+        existing = {(e["season"], e["episode"]) for e in self.db.list_episodes(series_id)}
+        added = []
+        for ep in info.episodes:
+            self.db.upsert_episode(
+                series_id, ep.season, ep.episode, title=ep.title, air_date=ep.air_date
+            )
+            if (ep.season, ep.episode) in existing:
+                continue
+            # New episode: apply the monitoring rule. Specials off by default.
+            ep_monitored = monitored and ep.season != 0
+            row = self.db.query_one(
+                "SELECT id FROM episodes WHERE series_id=? AND season=? AND episode=?",
+                (series_id, ep.season, ep.episode),
+            )
+            self.db.execute(
+                "UPDATE episodes SET monitored=? WHERE id=?",
+                (1 if ep_monitored else 0, row["id"]),
+            )
+            added.append((ep.season, ep.episode))
+
+        # Refresh metadata (never touch monitored/root_folder/identity) + stamp time.
+        self.db.execute(
+            "UPDATE series SET title=?, year=?, overview=?, status=?, poster=?, "
+            "last_refresh=? WHERE id=?",
+            (info.title, info.year, info.overview, info.status, info.poster,
+             time.time(), series_id),
+        )
+        return {
+            "series_id": series_id,
+            "title": info.title,
+            "status": info.status,
+            "new_episodes": len(added),
+            "added": [f"S{s:02d}E{e:02d}" for s, e in added],
+            "total_episodes": len(info.episodes),
+        }
+
+    async def refresh_stale_series(self) -> list[dict]:
+        """Refresh monitored, still-airing series whose metadata hasn't been
+        re-fetched within rss.refresh_interval_hours. Used by the RSS poller."""
+        hours = self.config.rss.refresh_interval_hours
+        if not hours:
+            return []
+        cutoff = time.time() - hours * 3600
+        out = []
+        for series in self.db.list_series():
+            if not series["monitored"] or series["provider"] == "plex":
+                continue
+            if (series.get("status") or "").strip().lower() in self.ENDED_STATUSES:
+                continue
+            last = series.get("last_refresh")
+            if last is not None and last > cutoff:
+                continue
+            try:
+                res = await self.refresh_series(series["id"])
+            except Exception as exc:  # noqa: BLE001 - report, don't crash the poll
+                out.append({"series": series["title"], "error": str(exc)})
+                continue
+            if res.get("new_episodes"):
+                out.append(res)
+        return out
 
     # -- release search ----------------------------------------------------- #
     async def search_releases(
