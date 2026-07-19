@@ -168,6 +168,11 @@ in sync when adding a config step or provider/client type.
   list-returning tools too. Auth tools consolidated into one
   `auth_token(action, token)`. Optional config fields clear on `""` via
   `_set_opt` (None still = leave unchanged).
+- Plex identity persistence (G5): `import_from_plex` stores each show's
+  `series.plex_rating_key`/`plex_section`. `activate_series` prefers the stored
+  rating key for `show_episodes` (reliable lookup instead of a title search) and
+  forces `absolute_numbering` when `plex_section == plex.anime_section`, even if
+  the metadata provider itself doesn't declare absolute numbering.
 - `activate_series(series_id, provider, provider_id)`: converts a catalogued
   (plex-imported, no-episode) series into a monitored one — fetches episodes from
   the provider, re-keys the series row to that provider/id, and marks episodes

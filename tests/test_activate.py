@@ -89,6 +89,50 @@ async def test_activate_conflict_returns_error(plex_configured, fakes, monkeypat
     assert "error" in res and "already uses" in res["error"]
 
 
+async def test_activate_uses_stored_plex_rating_key(plex_configured, fakes, monkeypatch):
+    app = plex_configured
+    # tmdb-keyed catalogue entry, but with a stored Plex rating key (G5).
+    sid = app.db.upsert_series(
+        provider="tmdb", provider_id="55", title="Show", plex_rating_key="777",
+    )
+    info = SeriesInfo(
+        provider="tmdb", provider_id="55", title="Show", seasons=[1],
+        episodes=[EpisodeInfo(season=1, episode=1)],
+    )
+
+    class RecordingPlex(FakePlex):
+        def show_episodes(self, rating_key=None, title=None, section=None):
+            self.seen_key = rating_key
+            return [(1, 1)]
+
+    plex = RecordingPlex()
+    monkeypatch.setattr(app, "plex", lambda: plex)
+    monkeypatch.setattr(app, "provider", lambda *_a, **_k: fakes["Provider"](series_info=info))
+    res = await app.activate_series(sid, provider="tmdb", provider_id="55")
+    assert plex.seen_key == "777"  # stored rating key used, not a title search
+    assert res["marked_downloaded"] == 1
+
+
+async def test_activate_absolute_from_plex_section(plex_configured, fakes, monkeypatch):
+    app = plex_configured
+    # anime_section configured; series catalogued from it, but provider is tmdb
+    # (which doesn't declare absolute). The stored section forces absolute.
+    app.store.mutate(lambda c: setattr(c.plex, "anime_section", "Anime"))
+    sid = app.db.upsert_series(
+        provider="plex", provider_id="101", title="Aethering",
+        plex_rating_key="101", plex_section="Anime",
+    )
+    monkeypatch.setattr(
+        app, "provider", lambda *_a, **_k: fakes["Provider"](series_info=_anime_info(5))
+    )  # provider NOT flagged absolute
+    plex = FakePlex()
+    plex._show_episodes = [(1, i) for i in range(1, 4)]
+    monkeypatch.setattr(app, "plex", lambda: plex)
+    res = await app.activate_series(sid, provider="jikan", provider_id="52991")
+    assert res["absolute_numbering"] is True
+    assert res["marked_downloaded"] == 3  # absolute: 3 files -> eps 1..3
+
+
 async def test_activate_no_plex_still_adds_episodes(app, fakes, monkeypatch):
     # Plex not configured -> episodes fetched, none marked downloaded.
     sid = app.db.upsert_series(provider="plex", provider_id="101", title="Aethering", absolute_numbering=1)

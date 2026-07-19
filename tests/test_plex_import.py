@@ -78,6 +78,16 @@ async def test_import_marks_existing_missing_movie_downloaded(plex_app):
     assert m["movie_status"] == "downloaded"
 
 
+async def test_import_stores_plex_identity(plex_app):
+    await plex_app.import_from_plex(dry_run=False)
+    series = {s["title"]: s for s in plex_app.db.list_series()}
+    assert series["Aethering"]["plex_rating_key"] == "101"
+    assert series["Aethering"]["plex_section"] == "Anime"
+    # Even tmdb-keyed series keep their Plex handle for later activation.
+    assert series["Blade x Soul"]["plex_rating_key"] == "102"
+    assert series["Blade x Soul"]["plex_section"] == "Anime"
+
+
 async def test_reimport_is_idempotent(plex_app):
     await plex_app.import_from_plex(dry_run=False)
     await plex_app.import_from_plex(dry_run=False)

@@ -714,8 +714,16 @@ class App:
         prov = self.provider(provider)
         info = await prov.get_series(provider_id)
         absolute = bool(getattr(prov, "absolute_numbering", False))
-        # Capture the Plex handle before we rewrite the series keys.
-        plex_key = series["provider_id"] if series["provider"] == "plex" else None
+        # If Plex flagged this section as anime, absolute numbering applies even
+        # if the metadata provider itself doesn't declare it.
+        anime_section = self.config.plex.anime_section
+        if anime_section and series.get("plex_section") == anime_section:
+            absolute = True
+        # Capture the Plex handle before we rewrite the series keys — prefer the
+        # rating key captured at import time (G5) over the plex-provider fallback.
+        plex_key = series.get("plex_rating_key") or (
+            series["provider_id"] if series["provider"] == "plex" else None
+        )
         plex_title = series["title"]
 
         try:
@@ -840,6 +848,7 @@ class App:
                     provider=provider, provider_id=str(pid), title=it["title"],
                     year=it["year"], monitored=1 if monitored else 0,
                     folder_name=folder, absolute_numbering=1 if absolute else 0,
+                    plex_rating_key=str(it["rating_key"]), plex_section=it["section"],
                 )
                 counts["series"] += 1
 
