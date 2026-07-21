@@ -24,8 +24,7 @@ CREATE TABLE IF NOT EXISTS series (
     status        TEXT,
     poster        TEXT,
     monitored     INTEGER NOT NULL DEFAULT 1,
-    quality_profile TEXT,
-    root_folder   TEXT,
+    root_folder   TEXT,                              -- NULL = use the default root
     folder_name   TEXT,
     absolute_numbering INTEGER NOT NULL DEFAULT 0,
     last_refresh  REAL,                              -- last metadata re-fetch (G1)
@@ -60,8 +59,7 @@ CREATE TABLE IF NOT EXISTS movies (
     poster        TEXT,
     monitored     INTEGER NOT NULL DEFAULT 1,
     movie_status  TEXT NOT NULL DEFAULT 'missing',  -- missing|grabbed|downloaded
-    quality_profile TEXT,
-    root_folder   TEXT,
+    root_folder   TEXT,                             -- NULL = use the default root
     folder_name   TEXT,
     file_path     TEXT,
     quality       TEXT,                             -- resolution of the imported file (G4)
@@ -167,6 +165,16 @@ class Database:
             self._conn.execute("ALTER TABLE series ADD COLUMN plex_rating_key TEXT")
         if "plex_section" not in scols:
             self._conn.execute("ALTER TABLE series ADD COLUMN plex_section TEXT")
+        # quality_profile was never wired to anything (LLMarr uses the single
+        # config-level QualityConfig, not per-item Sonarr profiles). Left in place
+        # it surfaces as a permanent "quality_profile: null" in every tool response
+        # and reads as an unconfigured pipeline. Drop it.
+        for table, present in (("series", scols), ("movies", mcols)):
+            if "quality_profile" in present:
+                try:
+                    self._conn.execute(f"ALTER TABLE {table} DROP COLUMN quality_profile")
+                except sqlite3.OperationalError:
+                    pass  # SQLite < 3.35; harmless to keep the dead column
 
     # -- low level ---------------------------------------------------------- #
     def execute(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:

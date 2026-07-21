@@ -163,3 +163,39 @@ def test_remove_series(wired):
     out = server.remove_series(sid)
     assert out["removed"] == sid
     assert wired.db.get_series(sid) is None
+
+
+def test_get_series_resolves_the_default_root_folder(wired):
+    """A series row with root_folder NULL uses the default root for its media
+    type — the response must say so, not just report a bare null."""
+    server.configure_root_folder("videos", "/mnt/videos", media_type="tv")
+    sid = wired.db.upsert_series(provider="tmdb", provider_id="1", title="Show")
+    out = server.get_series(sid)
+    assert out["root_folder"] is None  # no per-series override
+    assert out["root_folder_resolved"] == {
+        "name": "videos", "path": "/mnt/videos", "context": "local",
+    }
+    assert "warning" not in out
+
+
+def test_get_series_warns_when_no_root_folder_exists(wired):
+    sid = wired.db.upsert_series(provider="tmdb", provider_id="1", title="Show")
+    out = server.get_series(sid)
+    assert out["root_folder_resolved"] is None
+    assert "configure_root_folder" in out["warning"]
+
+
+def test_get_movie_resolves_its_own_media_type(wired):
+    server.configure_root_folder("videos", "/mnt/videos", media_type="tv")
+    server.configure_root_folder("films", "/mnt/films", media_type="movie")
+    mid = wired.db.upsert_movie(provider="tmdb", provider_id="1", title="Film")
+    assert server.get_movie(mid)["root_folder_resolved"]["path"] == "/mnt/films"
+
+
+def test_no_dead_quality_profile_column(wired):
+    """quality_profile was never wired to anything and made every response look
+    like an unconfigured pipeline."""
+    sid = wired.db.upsert_series(provider="tmdb", provider_id="1", title="Show")
+    mid = wired.db.upsert_movie(provider="tmdb", provider_id="1", title="Film")
+    assert "quality_profile" not in wired.db.get_series(sid)
+    assert "quality_profile" not in wired.db.get_movie(mid)

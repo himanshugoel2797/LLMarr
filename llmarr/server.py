@@ -643,13 +643,20 @@ async def add_series(
     an anime from MyAnimeList). ``seasons`` optionally limits which seasons are
     monitored for auto-grab (default: all). Re-adding an existing series refreshes
     metadata without resetting your monitored choices. Note: anime is modelled as
-    season 1 with absolute episode numbers."""
-    return await app().add_series(
-        provider_id,
-        monitored=monitored,
-        root_folder=root_folder,
-        seasons=seasons,
-        provider=provider,
+    season 1 with absolute episode numbers.
+
+    ``root_folder`` is an optional override naming one of the configured roots;
+    leave it unset (the usual case) to use the default root for TV — the response's
+    ``root_folder_resolved`` shows which one that is."""
+    return _with_root(
+        await app().add_series(
+            provider_id,
+            monitored=monitored,
+            root_folder=root_folder,
+            seasons=seasons,
+            provider=provider,
+        ),
+        "tv",
     )
 
 
@@ -660,6 +667,26 @@ _MOVIE_COMPACT = ("id", "title", "year", "monitored", "movie_status", "provider"
 def _compact(rows: list[dict], keys, limit: Optional[int]) -> list[dict]:
     out = [{k: r.get(k) for k in keys} for r in rows]
     return out[:limit] if limit else out
+
+
+def _with_root(row: dict, media_type: str) -> dict:
+    """Annotate a series/movie row with the root folder its imports will land in.
+
+    ``root_folder`` is an optional per-item *override*; NULL means "use the default
+    root for this media type", which is the normal case. Resolving it here stops a
+    bare ``root_folder: null`` from reading as an unconfigured import pipeline.
+    """
+    out = dict(row)
+    rf = app().root_folder(row.get("root_folder"), media_type)
+    out["root_folder_resolved"] = (
+        {"name": rf.name, "path": rf.path, "context": rf.context} if rf else None
+    )
+    if rf is None:
+        out["warning"] = (
+            f"no {media_type} root folder is configured, so imports have nowhere to "
+            "land; call configure_root_folder"
+        )
+    return out
 
 
 @tool
@@ -681,7 +708,7 @@ def get_series(series_id: int, include_episodes: bool = False) -> dict:
     summary = {"total": len(episodes)}
     for e in episodes:
         summary[e["status"]] = summary.get(e["status"], 0) + 1
-    result = dict(series)
+    result = _with_root(series, "tv")
     result["episode_summary"] = summary
     if include_episodes:
         result["episodes"] = episodes
@@ -782,12 +809,16 @@ async def add_movie(
 ) -> dict:
     """Add a movie to the library by its metadata provider id. Pass the same
     ``provider`` used to find it. A monitored movie is auto-grabbed by the RSS
-    poller while it is still missing."""
-    return await app().add_movie(
-        provider_id,
-        monitored=monitored,
-        root_folder=root_folder,
-        provider=provider,
+    poller while it is still missing. ``root_folder`` is an optional override;
+    unset means the default movie root (see ``root_folder_resolved``)."""
+    return _with_root(
+        await app().add_movie(
+            provider_id,
+            monitored=monitored,
+            root_folder=root_folder,
+            provider=provider,
+        ),
+        "movie",
     )
 
 
@@ -803,7 +834,9 @@ def list_movies(limit: Optional[int] = None, full: bool = False) -> list[dict]:
 def get_movie(movie_id: int) -> dict:
     """Get one movie from the library."""
     movie = app().db.get_movie(movie_id)
-    return movie or {"error": f"No movie with id {movie_id}"}
+    if not movie:
+        return {"error": f"No movie with id {movie_id}"}
+    return _with_root(movie, "movie")
 
 
 @tool

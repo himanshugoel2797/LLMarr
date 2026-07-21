@@ -156,3 +156,26 @@ def test_migration_adds_quality_and_upgrade_columns(tmp_path):
     assert "is_upgrade" in {r["name"] for r in d.query("PRAGMA table_info(downloads)")}
     assert "quality" in {r["name"] for r in d.query("PRAGMA table_info(episodes)")}
     assert "quality" in {r["name"] for r in d.query("PRAGMA table_info(movies)")}
+
+
+def test_migration_drops_legacy_quality_profile(tmp_path):
+    """A DB created by an earlier version carries the dead quality_profile column;
+    opening it with the current code removes it."""
+    import sqlite3
+    from llmarr.db import Database
+
+    path = tmp_path / "legacy.db"
+    con = sqlite3.connect(path)
+    con.executescript(
+        "CREATE TABLE series (id INTEGER PRIMARY KEY, provider TEXT, "
+        "provider_id TEXT, title TEXT, quality_profile TEXT, root_folder TEXT);"
+        "CREATE TABLE movies (id INTEGER PRIMARY KEY, quality_profile TEXT);"
+    )
+    con.execute("INSERT INTO series (provider, provider_id, title) VALUES ('tmdb','1','Show')")
+    con.commit()
+    con.close()
+
+    db = Database(path)
+    cols = {r["name"] for r in db.execute("PRAGMA table_info(series)")}
+    assert "quality_profile" not in cols
+    assert db.query_one("SELECT title FROM series")["title"] == "Show"  # data intact
